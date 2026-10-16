@@ -1,0 +1,49 @@
+name: Tri IA des mails
+
+on:
+  schedule:
+    - cron: '4-59/10 * * * *'   # toutes les 10 min (GitHub peut décaler de quelques minutes)
+  workflow_dispatch:
+
+concurrency:
+  group: tri
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write   # garder le workflow actif (GitHub désactive les tâches planifiées après 60 j sans activité)
+
+jobs:
+  tri:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restaurer l'état (quota du jour, erreurs)
+        uses: actions/cache/restore@v4
+        with:
+          path: etat
+          key: etat-${{ github.run_id }}
+          restore-keys: etat-
+
+      - name: Trier la boîte
+        run: python3 tri.py
+        env:
+          IMAP_USER: ${{ vars.IMAP_USER }}
+          IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          INFOS_URL: ${{ vars.INFOS_URL }}
+
+      - name: Sauver l'état
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: etat
+          key: etat-${{ github.run_id }}
+
+      - name: Garder la tâche planifiée active
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/tri.yml/enable" || true
