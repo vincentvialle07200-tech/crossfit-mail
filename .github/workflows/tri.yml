@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       menage:
-        description: 'Grand ménage : trier tout l\'historique de la boîte de réception'
+        description: "Grand ménage : trier tout l'historique de la boîte de réception"
         type: boolean
         default: false
 
