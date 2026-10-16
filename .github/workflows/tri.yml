@@ -9,6 +9,10 @@ on:
         description: 'Mode test (classe sans rien modifier dans la boîte)'
         type: boolean
         default: false
+      menage:
+        description: 'Grand ménage : trier tout l\'historique de la boîte de réception'
+        type: boolean
+        default: false
 
 concurrency:
   group: tri
@@ -21,7 +25,7 @@ permissions:
 jobs:
   tri:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: ${{ inputs.menage && 60 || 8 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,6 +44,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           INFOS_URL: ${{ vars.INFOS_URL }}
           DRY_RUN: ${{ inputs.test && '1' || '0' }}
+          JOURS: ${{ inputs.menage && '3650' || '3' }}
+          MAX_MAILS: ${{ inputs.menage && '4000' || '40' }}
+          QUOTA_IA: ${{ inputs.menage && '4000' || '300' }}
 
       - name: Sauver l'état
         if: always()

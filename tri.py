@@ -30,6 +30,7 @@ import re
 import sys
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from email import message_from_bytes, policy
 from email.message import EmailMessage
@@ -39,9 +40,10 @@ from email.utils import formataddr, formatdate, getaddresses, make_msgid, parsea
 NOM_SALLE = 'La Salle CrossFit'
 MODELE = 'claude-haiku-5-5'
 SERVEUR = 'imap.ionos.fr'
-MAX_MAILS_PAR_PASSAGE = 15
-MAX_APPELS_IA_PAR_JOUR = 300   # garde-fou budget (≈ 0,15 $/jour max)
-JOURS = 3                      # fenêtre de recherche
+MAX_MAILS_PAR_PASSAGE = int(os.environ.get('MAX_MAILS') or 40)
+MAX_APPELS_IA_PAR_JOUR = int(os.environ.get('QUOTA_IA') or 300)   # garde-fou budget (≈ 0,10 $/jour max)
+JOURS = int(os.environ.get('JOURS') or 3)   # fenêtre de recherche (grand ménage : JOURS=3650)
+RECENT_JOURS = 3               # brouillons seulement pour les mails récents
 FICHIER_ETAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etat', 'etat.json')
 
 RACINE = 'Tri IA'
@@ -409,7 +411,7 @@ def trier():
     boite = Boite(user, os.environ['IMAP_PASSWORD'])
     etat = charger_etat()
     stats = {c: 0 for c in CATEGORIES}
-    stats.update(brouillons=0, stop=0, erreurs=0, repondus=0)
+    stats.update(brouillons=0, stop=0, erreurs=0, repondus=0, anciens_gardes=0)
     try:
         boite.preparer_dossiers()
         brouillons = boite.special('\\Drafts', {'drafts', 'brouillons', 'entwürfe'})
@@ -448,63 +450,91 @@ def trier():
         flagges = {str(m.get('Message-ID') or '').strip(): u for u, m in drapeaux.items()}
 
         criteres = ['SINCE', depuis] + (['UNKEYWORD', MOT_TRAITE] if mots_ok else [])
-        traites = 0
-        for u in boite.chercher(*criteres):
-            if traites >= MAX_MAILS_PAR_PASSAGE:
-                break
-            data = boite.uid('FETCH', u, '(BODY.PEEK[])')
-            brut = next((x[1] for x in data if isinstance(x, tuple)), None)
-            if brut is None:
-                continue
-            msg = message_from_bytes(brut, policy=policy.default)
-            mid = str(msg.get('Message-ID') or '').strip() or 'uid-' + u.decode()
-            cle = empreinte(mid)
-            if cle in etat.get('vus', {}):
-                if mots_ok:
-                    boite.ecrire('STORE', u, '+FLAGS.SILENT', '(%s)' % MOT_TRAITE)
-                continue
+        uids = list(reversed(boite.chercher(*criteres)))[:MAX_MAILS_PAR_PASSAGE]  # plus récents d'abord
+        recent = time.time() - RECENT_JOURS * 86400
+        a_flagger = time.time() - 7 * 86400
 
-            def marquer(*mots):
-                if mots_ok:
-                    boite.ecrire('STORE', u, '+FLAGS.SILENT', '(%s)' % ' '.join((MOT_TRAITE,) + mots))
-                etat.setdefault('vus', {})[cle] = time.time()
+        # 1) Lecture des mails (par paquets)
+        candidats = []
+        for i in range(0, len(uids), 25):
+            paquet = uids[i:i + 25]
+            meta = {}
+            for item in boite.uid('FETCH', b','.join(paquet), '(FLAGS INTERNALDATE)'):
+                ligne = item[0] if isinstance(item, tuple) else item
+                if not isinstance(ligne, bytes):
+                    continue
+                m = re.search(rb'UID (\d+)', ligne)
+                if m:
+                    f = re.search(rb'FLAGS \(([^)]*)\)', ligne)
+                    t = imaplib.Internaldate2tuple(ligne)
+                    meta[m.group(1)] = ((f.group(1).decode() if f else ''), time.mktime(t) if t else time.time())
+            for item in boite.uid('FETCH', b','.join(paquet), '(BODY.PEEK[]<0.200000>)'):
+                if not isinstance(item, tuple):
+                    continue
+                m = re.search(rb'UID (\d+)', item[0])
+                if not m or m.group(1) not in meta:
+                    continue
+                u = m.group(1)
+                msg = message_from_bytes(item[1], policy=policy.default)
+                mid = str(msg.get('Message-ID') or '').strip() or 'uid-' + u.decode()
+                candidats.append({'u': u, 'msg': msg, 'mid': mid, 'cle': empreinte(mid),
+                                  'flags': meta[u][0], 'date': meta[u][1]})
 
-            expediteur = str(msg.get('From') or '')
-            if adresse(expediteur) == user.lower():
-                marquer()
-                continue
-            if re.search(r'mailer-daemon|postmaster', expediteur, re.I):
-                marquer('TriIA_info')
-                boite.deplacer(u, boite.chemin(DOSSIERS['info']))
+        def marquer(c, *mots):
+            if mots_ok:
+                boite.ecrire('STORE', c['u'], '+FLAGS.SILENT', '(%s)' % ' '.join((MOT_TRAITE,) + mots))
+            etat.setdefault('vus', {})[c['cle']] = time.time()
+
+        # 2) Tri sans IA (déjà vus, mails de la salle, retours d'erreur)
+        pour_ia = []
+        for c in candidats:
+            exp = str(c['msg'].get('From') or '')
+            if c['cle'] in etat.get('vus', {}):
+                if mots_ok:
+                    boite.ecrire('STORE', c['u'], '+FLAGS.SILENT', '(%s)' % MOT_TRAITE)
+            elif adresse(exp) == user.lower():
+                marquer(c)
+            elif re.search(r'mailer-daemon|postmaster', exp, re.I):
+                marquer(c, 'TriIA_info')
+                boite.deplacer(c['u'], boite.chemin(DOSSIERS['info']))
                 stats['info'] += 1
-                continue
-
-            if not quota_ia(etat):
+            elif quota_ia(etat):
+                pour_ia.append(c)
+            else:
                 print('Plafond quotidien d\'appels IA atteint, reprise demain.')
                 break
-            traites += 1
 
-            corps = texte_mail(msg)
-            sujet = str(msg.get('Subject') or '')
+        # 3) Appels IA en parallèle
+        def classer(c):
+            c['corps'] = texte_mail(c['msg'])
             try:
-                r = appeler_claude(expediteur, sujet, corps[:6000], infos)
+                c['r'] = appeler_claude(str(c['msg'].get('From') or ''), str(c['msg'].get('Subject') or ''),
+                                        c['corps'][:6000], infos)
             except Exception as e:
+                c['err'] = e
+            return c
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            classes = list(pool.map(classer, pour_ia))
+
+        # 4) Rangement (du plus ancien au plus récent, pour les fils)
+        for c in sorted(classes, key=lambda x: x['date']):
+            u, msg, mid, cle = c['u'], c['msg'], c['mid'], c['cle']
+            if 'err' in c:
+                e = c['err']
                 stats['erreurs'] += 1
-                print('Erreur IA : %s' % (str(e)[:200] if DETAILS else type(e).__name__ + ' ' + str(e)[:80]))
+                print('Erreur IA : %s' % (type(e).__name__ + ' ' + str(e)[:80]))
                 erreurs = etat.setdefault('erreurs', {})
                 erreurs[cle] = erreurs.get(cle, 0) + 1
                 if erreurs[cle] >= 3:
-                    marquer('TriIA_erreur')
+                    marquer(c, 'TriIA_erreur')
                     erreurs.pop(cle, None)
                 continue
             etat.get('erreurs', {}).pop(cle, None)
-
+            r = c['r']
             cat = r['categorie']
             stats[cat] += 1
             if DETAILS:
-                print('[%s]%s %s — %s' % (cat, ' [STOP]' if r['stop_marketing'] else '', sujet, r['resume']))
-                if r.get('brouillon') and cat in ('urgent', 'a_repondre'):
-                    print('   ' + r['brouillon'].replace('\n', '\n   '))
+                print('[%s]%s %s — %s' % (cat, ' [STOP]' if r['stop_marketing'] else '', msg.get('Subject'), r['resume']))
 
             # Un nouveau mail du même fil remplace l'ancien : on retire le drapeau de l'ancien
             for ancien in ids(msg.get('References')) + ids(msg.get('In-Reply-To')):
@@ -518,18 +548,22 @@ def trier():
                 boite.ecrire('COPY', u, q(boite.chemin(DOSSIERS['stop'])))
 
             if cat in ('urgent', 'a_repondre'):
-                if r.get('brouillon') and brouillons and mid not in deja_brouillon:
-                    boite.ajouter(brouillons, brouillon_reponse(msg, r['brouillon'], corps), '(\\Draft \\Seen)')
+                deja_repondu = '\\Answered' in c['flags'] or mid in repondus
+                if c['date'] >= recent and r.get('brouillon') and brouillons and mid not in deja_brouillon and not deja_repondu:
+                    boite.ajouter(brouillons, brouillon_reponse(msg, r['brouillon'], c['corps']), '(\\Draft \\Seen)')
                     deja_brouillon.add(mid)
                     mots.append('TriIA_brouillon')
                     stats['brouillons'] += 1
-                boite.ecrire('STORE', u, '+FLAGS.SILENT', '(\\Flagged)')
-                flagges[mid] = u
-                marquer(*mots)
+                if c['date'] >= a_flagger and not deja_repondu:
+                    boite.ecrire('STORE', u, '+FLAGS.SILENT', '(\\Flagged)')
+                    flagges[mid] = u
+                else:
+                    stats['anciens_gardes'] += 1
+                marquer(c, *mots)
             else:
                 if cat == 'pub':
                     boite.ecrire('STORE', u, '+FLAGS.SILENT', '(\\Seen)')
-                marquer(*mots)
+                marquer(c, *mots)
                 boite.deplacer(u, boite.chemin(DOSSIERS[cat]))
     finally:
         if not DRY_RUN:
