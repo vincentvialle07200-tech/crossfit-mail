@@ -5,7 +5,9 @@ REPO=vincentvialle07200-tech/crossfit-mail
 DOC=1rMiDedCaHIw_qB2aviMkU7SQnjnrLEIjUNye99iOm4E
 
 echo "\n1/4 Connexion GitHub (compte vincentvialle07200-tech)"
-gh auth status -h github.com >/dev/null 2>&1 && gh auth refresh -h github.com -s workflow || gh auth login -h github.com -p https -w -s workflow
+echo "   (en attente de la validation du code dans Chrome…)"
+until gh auth status -h github.com 2>/dev/null | grep -q "workflow"; do sleep 3; done
+echo "   ✓ connecté : $(gh api user -q .login)"
 
 echo "\n2/4 Envoi du code"
 git push -q "https://x-access-token:$(gh auth token)@github.com/$REPO.git" main
