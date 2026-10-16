@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '4-59/10 * * * *'   # toutes les 10 min (GitHub peut décaler de quelques minutes)
   workflow_dispatch:
+    inputs:
+      test:
+        description: 'Mode test (classe sans rien modifier dans la boîte)'
+        type: boolean
+        default: false
 
 concurrency:
   group: tri
@@ -34,6 +39,7 @@ jobs:
           IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           INFOS_URL: ${{ vars.INFOS_URL }}
+          DRY_RUN: ${{ inputs.test && '1' || '0' }}
 
       - name: Sauver l'état
         if: always()

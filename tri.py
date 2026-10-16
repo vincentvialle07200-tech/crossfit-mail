@@ -430,6 +430,8 @@ def trier():
 
         boite.selectionner('INBOX')
         mots_ok = '\\*' in str(boite.M.response('PERMANENTFLAGS')[1])
+        print('Serveur : délimiteur %r, MOVE %s, mots-clés %s, Brouillons=%r, Envoyés=%r%s' % (
+            boite.delim, 'MOVE' in boite.capas, mots_ok, brouillons, envoyes, ' — MODE TEST, rien n\'est modifié' if DRY_RUN else ''))
 
         # Drapeaux à retirer : mail répondu (\Answered ou réponse dans Envoyés)
         drapeaux = boite.entetes(boite.chercher('FLAGGED', 'KEYWORD', MOT_TRAITE, 'SINCE', depuis)
