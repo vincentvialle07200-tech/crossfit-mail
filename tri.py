@@ -48,6 +48,8 @@ FICHIER_ETAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etat', 
 
 RACINE = 'Tri IA'
 DOSSIERS = {
+    'urgent': '1 Urgent',
+    'a_repondre': '2 À répondre',
     'compta': '3 Compta',
     'info': '4 Info',
     'pub': '5 Pub & notifs',
@@ -531,6 +533,8 @@ def trier():
                 continue
             etat.get('erreurs', {}).pop(cle, None)
             r = c['r']
+            if r['stop_marketing'] and r['categorie'] not in ('urgent', 'a_repondre'):
+                r['categorie'] = 'a_repondre'  # demande STOP : drapeau + brouillon de confirmation
             cat = r['categorie']
             stats[cat] += 1
             if DETAILS:
@@ -548,6 +552,7 @@ def trier():
                 boite.ecrire('COPY', u, q(boite.chemin(DOSSIERS['stop'])))
 
             if cat in ('urgent', 'a_repondre'):
+                boite.ecrire('COPY', u, q(boite.chemin(DOSSIERS[cat])))  # copie de suivi ; l'original reste dans la boîte de réception
                 deja_repondu = '\\Answered' in c['flags'] or mid in repondus
                 if c['date'] >= recent and r.get('brouillon') and brouillons and mid not in deja_brouillon and not deja_repondu:
                     boite.ajouter(brouillons, brouillon_reponse(msg, r['brouillon'], c['corps']), '(\\Draft \\Seen)')
