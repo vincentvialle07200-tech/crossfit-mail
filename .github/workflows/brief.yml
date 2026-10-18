@@ -1,10 +1,7 @@
 name: Brief du matin
 
 on:
-  schedule:
-    - cron: '35 4 * * *'   # 6h35 heure d'été / 5h35 hiver (UTC) — le script attend 6h30 heure de Paris
-    - cron: '35 5 * * *'   # 7h35 été / 6h35 hiver ; le 2e passage ne fait rien si le brief est déjà déposé
-  workflow_dispatch:
+  workflow_dispatch:   # le brief quotidien est lancé par la boucle du tri (vers 7h) ; ici : envoi à la main
     inputs:
       forcer:
         description: "Déposer un brief maintenant (même s'il a déjà été envoyé aujourd'hui)"

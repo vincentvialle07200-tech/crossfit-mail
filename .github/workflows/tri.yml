@@ -2,7 +2,7 @@ name: Tri IA des mails
 
 on:
   schedule:
-    - cron: '4-59/10 * * * *'   # toutes les 10 min (GitHub peut décaler de quelques minutes)
+    - cron: '*/30 * * * *'   # relance de sécurité : chaque exécution tourne ~5h50 et trie toutes les 10 min
   workflow_dispatch:
     inputs:
       test:
@@ -15,7 +15,7 @@ on:
         default: false
 
 concurrency:
-  group: tri
+  group: tri-${{ github.event_name }}
   cancel-in-progress: false
 
 permissions:
@@ -25,7 +25,7 @@ permissions:
 jobs:
   tri:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.menage && 60 || 8 }}
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 
@@ -36,12 +36,22 @@ jobs:
           key: etat-${{ github.run_id }}
           restore-keys: etat-
 
-      - name: Trier la boîte
-        run: python3 tri.py
+      - name: Trier la boîte (toutes les 10 min pendant ~5h50) + brief de 7h
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then python3 tri.py; exit $?; fi
+          debut=$(date +%s); echecs=0
+          while [ $(( $(date +%s) - debut )) -lt 20700 ]; do
+            python3 tri.py && echecs=0 || echecs=$((echecs+1))
+            python3 brief.py || echo "Brief : échec"
+            [ $echecs -ge 3 ] && exit 1
+            sleep 600
+          done
         env:
           IMAP_USER: ${{ vars.IMAP_USER }}
           IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
+          RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
           INFOS_URL: ${{ vars.INFOS_URL }}
           DRY_RUN: ${{ inputs.test && '1' || '0' }}
           JOURS: ${{ inputs.menage && '3650' || '3' }}

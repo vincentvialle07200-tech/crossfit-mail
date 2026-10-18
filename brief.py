@@ -263,7 +263,7 @@ def rendre(b, maintenant):
 # ───────────────────────── Envoi ─────────────────────────
 def brief(forcer=False, apercu=False):
     maintenant = datetime.now(PARIS)
-    if not forcer and not apercu and not (maintenant.replace(hour=6, minute=30) <= maintenant < maintenant.replace(hour=10)):
+    if not forcer and not apercu and not (maintenant.replace(hour=7, minute=0) <= maintenant < maintenant.replace(hour=11)):
         print('Hors créneau du brief (%s), rien à faire.' % maintenant.strftime('%H:%M'))
         return
     boite = tri.Boite(os.environ['IMAP_USER'], os.environ['IMAP_PASSWORD'])
