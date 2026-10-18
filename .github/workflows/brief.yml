@@ -1,0 +1,35 @@
+name: Brief du matin
+
+on:
+  schedule:
+    - cron: '35 4 * * *'   # 6h35 heure d'été / 5h35 hiver (UTC) — le script attend 6h30 heure de Paris
+    - cron: '35 5 * * *'   # 7h35 été / 6h35 hiver ; le 2e passage ne fait rien si le brief est déjà déposé
+  workflow_dispatch:
+    inputs:
+      forcer:
+        description: "Déposer un brief maintenant (même s'il a déjà été envoyé aujourd'hui)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: brief
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Préparer et déposer le brief
+        run: python3 brief.py
+        env:
+          IMAP_USER: ${{ vars.IMAP_USER }}
+          IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
+          RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
+          FORCER: ${{ inputs.forcer && '1' || '0' }}
