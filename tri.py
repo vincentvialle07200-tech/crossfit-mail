@@ -574,7 +574,7 @@ def trier():
         if not DRY_RUN:
             sauver_etat(etat)
         boite.fermer()
-    print('Bilan : ' + ', '.join('%s %d' % (k, v) for k, v in stats.items() if v) or 'rien de nouveau')
+    print('Bilan : ' + (', '.join('%s %d' % (k, v) for k, v in stats.items() if v) or 'rien de nouveau'))
     return stats
 
 
