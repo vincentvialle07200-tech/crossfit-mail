@@ -8,6 +8,10 @@ on:
         type: choice
         options: [brouillons, test, auto]
         default: brouillons
+      refaire:
+        description: "Réécrire tous les brouillons de relance en attente"
+        type: boolean
+        default: false
       nettoyer:
         description: "Retirer les brouillons de relance d'adhérents qui ne sont plus absents"
         type: boolean
@@ -32,3 +36,4 @@ jobs:
           RELANCES_MODE: ${{ inputs.mode }}
           FORCER: '1'
           NETTOYER: ${{ inputs.nettoyer && '1' || '0' }}
+          REFAIRE: ${{ inputs.refaire && '1' || '0' }}

@@ -89,7 +89,7 @@ def consignes(infos):
         '- pub : newsletter, promotion, prospection commerciale non sollicitée, notifications de réseaux sociaux sans importance.',
         '',
         'BROUILLON (seulement pour urgent et a_repondre)',
-        '- Français, chaleureux, direct. VOUVOIEMENT par défaut ; tutoie seulement si la personne emploie elle-même « tu », « te », « toi » ou « ton » dans son mail. 3 à 8 lignes. Commence par « Bonjour <prénom>, » si le prénom est connu.',
+        '- Français, chaleureux, direct. TUTOIEMENT par défaut avec les adhérents, prospects et particuliers (esprit box de CrossFit) ; vouvoiement seulement pour les fournisseurs, entreprises, partenaires professionnels et administrations. 3 à 8 lignes. Commence par « Bonjour <prénom>, » si le prénom est connu.',
         '- Utilise UNIQUEMENT les infos ci-dessous. Si une info manque, écris [À COMPLÉTER : ce qu\'il faut] au lieu d\'inventer. Jamais de prix, date ou promesse inventés.',
         '- Pour un prospect : propose une séance d\'essai, selon les conditions indiquées dans les infos.',
         '- Pour une résiliation ou une réclamation : reste factuel, propose d\'en parler, n\'accepte ni ne refuse rien au nom de la salle.',
