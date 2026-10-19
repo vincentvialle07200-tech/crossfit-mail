@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "test = récap dans la boîte seulement ; auto = envoi aux adhérents"
+        description: "test = récap dans la boîte ; brouillons = un brouillon par adhérent ; auto = envoi aux adhérents"
         type: choice
-        options: [test, auto]
-        default: test
+        options: [brouillons, test, auto]
+        default: brouillons
 
 permissions:
   contents: read

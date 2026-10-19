@@ -54,6 +54,7 @@ DOSSIERS = {
     'info': '4 Info',
     'pub': '5 Pub & notifs',
     'stop': 'STOP marketing',
+    'relances': 'Relances absents',
 }
 CATEGORIES = ['urgent', 'a_repondre', 'compta', 'info', 'pub']
 MOT_TRAITE = 'TriIA'           # mot-clé IMAP posé sur chaque mail traité

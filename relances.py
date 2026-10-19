@@ -8,8 +8,10 @@ Chaque jour vers 10h (lancé par la boucle du tri) :
   - 15 mails par jour maximum : abonnés d'abord, absences les plus longues d'abord
   - mails rédigés par Claude, envoyés depuis contact@ (SMTP IONOS), copie dans « Objets envoyés »
 Mode (variable RELANCES_MODE) :
-  test → un récapitulatif « 🧪 Relances absents (TEST) » est déposé dans la boîte, rien n'est envoyé aux adhérents
-  auto → les mails partent aux adhérents
+  test       → un récapitulatif « 🧪 Relances absents (TEST) » est déposé dans la boîte
+  brouillons → un brouillon par adhérent dans « Brouillons » ; l'équipe relit et clique Envoyer (mode choisi le 19/10/2026)
+  auto       → les mails partent aux adhérents
+Journal de toutes les relances préparées/envoyées : dossier « Tri IA/Relances absents » (sert aux 45 jours et aux stats).
 Le journal GitHub étant public, rien de personnel n'y est jamais affiché (que des nombres).
 """
 
@@ -117,28 +119,43 @@ def adresses_stop(boite):
 
 
 def historique(boite, jours=DELAI_J):
-    """Relances envoyées (copies dans « Objets envoyés ») : [{id, date, test}]"""
-    envoyes = boite.special('\\Sent', {'sent', 'envoyés', 'objets envoyés', 'éléments envoyés'})
-    if not envoyes:
-        return []
-    boite.selectionner(envoyes, lecture_seule=True)
+    """Relances préparées ou envoyées : journal « Tri IA/Relances absents » (+ « Objets envoyés »). [{id, date}]"""
     depuis = (datetime.now(PARIS) - timedelta(days=jours)).strftime('%d-%b-%Y')
-    out = []
-    for m in boite.entetes(boite.chercher('SINCE', depuis, 'HEADER', ENTETE, '""'), ENTETE + ' DATE').values():
-        try:
-            d = parsedate_to_datetime(str(m.get('Date'))).astimezone(PARIS).date()
-        except Exception:
+    dossiers = [boite.chemin(tri.DOSSIERS['relances']),
+                boite.special('\\Sent', {'sent', 'envoyés', 'objets envoyés', 'éléments envoyés'})]
+    out, vus = [], set()
+    for dossier in dossiers:
+        if not dossier or dossier not in boite.dossiers:
             continue
-        out.append({'id': str(m.get(ENTETE)).strip(), 'date': d})
+        boite.selectionner(dossier, lecture_seule=True)
+        for m in boite.entetes(boite.chercher('SINCE', depuis, 'HEADER', ENTETE, '""'), ENTETE + ' DATE').values():
+            try:
+                d = parsedate_to_datetime(str(m.get('Date'))).astimezone(PARIS).date()
+            except Exception:
+                continue
+            cle = (str(m.get(ENTETE)).strip(), d)
+            if cle not in vus:
+                vus.add(cle)
+                out.append({'id': cle[0], 'date': d})
     return out
 
 
+def brouillons_en_attente(boite):
+    """Brouillons de relance pas encore envoyés par l'équipe."""
+    dossier = boite.special('\\Drafts', {'drafts', 'brouillons'})
+    if not dossier:
+        return 0
+    boite.selectionner(dossier, lecture_seule=True)
+    return len(boite.chercher('HEADER', ENTETE, '""'))
+
+
 def stats(boite, segments, maintenant):
-    """Pour le brief : relances envoyées sur 30 jours et adhérents revenus."""
-    rels = [r for r in historique(boite, 30)]
+    """Pour le brief : relances préparées ou envoyées sur 30 jours et adhérents revenus."""
+    rels = historique(boite, 30)
+    attente = brouillons_en_attente(boite)
     if not rels:
-        return {'envoyees': 0, 'revenus': 0}
-    return {'envoyees': len(rels), 'revenus': segments.revenus(rels, maintenant)}
+        return {'envoyees': 0, 'revenus': 0, 'en_attente': attente}
+    return {'envoyees': len(rels), 'revenus': segments.revenus(rels, maintenant), 'en_attente': attente}
 
 
 def deja_fait_aujourdhui(boite, maintenant, mode):
@@ -146,7 +163,7 @@ def deja_fait_aujourdhui(boite, maintenant, mode):
     if mode == 'test':
         boite.selectionner('INBOX', lecture_seule=True)
         return bool(boite.chercher('SINCE', jour, 'SUBJECT', '"Relances absents (TEST)"'))
-    return any(r['date'] == maintenant.date() for r in historique(boite, 1))
+    return any(r['date'] == maintenant.date() for r in historique(boite, 1))  # brouillons ou envoi
 
 
 # ───────────────────────── Rédaction (Claude) ─────────────────────────
@@ -235,8 +252,14 @@ def relancer(forcer=False):
         return
     boite = tri.Boite(os.environ['IMAP_USER'], os.environ['IMAP_PASSWORD'])
     try:
+        boite.preparer_dossiers()
         if not forcer and deja_fait_aujourdhui(boite, maintenant, mode):
             return
+        if mode == 'brouillons':
+            attente = brouillons_en_attente(boite)
+            if attente >= MAX_PAR_JOUR:
+                print('Relances : %d brouillons attendent déjà d\'être envoyés, rien de nouveau aujourd\'hui.' % attente)
+                return
         seg = Segments()
         stop = adresses_stop(boite)
         recents = {r['id'] for r in historique(boite)}
@@ -249,9 +272,24 @@ def relancer(forcer=False):
         if not candidats:
             return
         messages = rediger(candidats)
-        if mode != 'auto':
+        if mode == 'test':
             boite.ajouter('INBOX', recap_test(candidats, messages), '()')
             print('Récap TEST déposé dans la boîte.')
+            return
+        journal = boite.chemin(tri.DOSSIERS['relances'])
+        if mode == 'brouillons':
+            # Brouillons à relire puis envoyer par l'équipe ; rien ne part tout seul
+            dossier = boite.special('\\Drafts', {'drafts', 'brouillons'})
+            n = 0
+            for a in candidats:
+                m = messages.get(a['id'])
+                if not m:
+                    continue
+                msg = mail_relance(a, m)
+                boite.ajouter(dossier, msg, '(\\Draft)')
+                boite.ajouter(journal, msg, '(\\Seen)')
+                n += 1
+            print('%d brouillons de relance préparés.' % n)
             return
         envoyes = boite.special('\\Sent', {'sent', 'envoyés', 'objets envoyés', 'éléments envoyés'})
         n = 0
@@ -266,6 +304,7 @@ def relancer(forcer=False):
                     smtp.send_message(msg)
                     if envoyes:
                         boite.ajouter(envoyes, msg, '(\\Seen)')
+                    boite.ajouter(journal, msg, '(\\Seen)')
                     n += 1
                     time.sleep(2)
                 except Exception as e:

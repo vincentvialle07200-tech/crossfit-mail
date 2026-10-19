@@ -291,9 +291,9 @@ def rendre(b, maintenant):
         chiffres.append('7 jours : <b>%d</b> nouveaux inscrits · <b>%d</b> abonnements qui expirent' % (len(rw['nouveaux_7j']), len(rw['expirent_7j'])))
         rel = rw.get('relances')
         if rel and rel['envoyees']:
-            chiffres.append('🔁 Relances absents (30 j) : <b>%d</b> envoyées · <b>%d</b> revenus' % (rel['envoyees'], rel['revenus']))
-        elif rel and not rel['auto']:
-            chiffres.append('🔁 Relances absents : ' + gris('mode test, récap dans la boîte vers 10h'))
+            chiffres.append('🔁 Relances absents (30 j) : <b>%d</b> %s · <b>%d</b> revenus%s' % (
+                rel['envoyees'], 'préparées' if rel['mode'] == 'brouillons' else 'envoyées', rel['revenus'],
+                (' · ' + gris('%d brouillons à envoyer' % rel['en_attente'])) if rel.get('en_attente') else ''))
     h += section('📊 CHIFFRES CLÉS', liste(chiffres) if chiffres else vide(gris('⚠️ ResaWod : source indisponible')))
 
     # 🚨 Alertes
@@ -315,6 +315,9 @@ def rendre(b, maintenant):
         todo.append('📬 Répondre aux %d mails%s — drapeau dans la boîte de réception' % (len(mails), ' (%d brouillons prêts dans Brouillons)' % nb_br if nb_br else ''))
     if rw['ok'] and rw['expirent_7j']:
         todo.append('🔁 Proposer le renouvellement aux %d abonnements qui expirent sous 7 jours' % len(rw['expirent_7j']))
+    rel = rw.get('relances') if rw['ok'] else None
+    if rel and rel.get('en_attente'):
+        todo.append('🔁 Relire et envoyer les %d brouillons de relance des absents — dossier Brouillons' % rel['en_attente'])
     if rw['ok'] and rw['anniversaires']:
         todo.append('🎂 Souhaiter l\'anniversaire de %s (2 min)' % e(', '.join(rw['anniversaires'])))
     h += section('🎯 TO-DO DU JOUR', liste(todo) if todo else vide('RAS'))
@@ -369,7 +372,7 @@ def brief(forcer=False, apercu=False):
             try:
                 import relances
                 rw['relances'] = relances.stats(boite, relances.Segments(), maintenant)
-                rw['relances']['auto'] = (os.environ.get('RELANCES_MODE') or 'test').strip().lower() == 'auto'
+                rw['relances']['mode'] = (os.environ.get('RELANCES_MODE') or 'test').strip().lower()
             except Exception as e:
                 print('Stats relances indisponibles : %s' % type(e).__name__)
         if mise_a_jour and not rw['ok']:
