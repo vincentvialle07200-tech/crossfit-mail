@@ -44,3 +44,26 @@ for appel in (os.environ.get('APPELS') or '').split(';'):
         print(json.dumps(d if complet else structure(d), ensure_ascii=False)[:12000])
     except Exception as e:
         print('\n=== APPEL', appel, 'ERR', str(e)[:200])
+
+regles = os.environ.get('REGLES')
+if regles:
+    import urllib.request, urllib.parse
+    def post(chemin, data, en_json=False):
+        corps = json.dumps(data).encode() if en_json else urllib.parse.urlencode(data).encode()
+        req = urllib.request.Request(RESAWOD + chemin + '?id_application_in_browser=12881268', data=corps,
+                                     headers={'content-type': 'application/json' if en_json else 'application/x-www-form-urlencoded',
+                                              'X-Requested-With': 'XMLHttpRequest'})
+        try:
+            return json.loads(r.op.open(req, timeout=60).read())
+        except Exception as e:
+            return {'ERR': str(e)[:300]}
+    for i, jeu in enumerate(json.loads(regles)):
+        d = post('/api/v4/segments/rules/users', {'rules': json.dumps(jeu)})
+        print('\n=== RÈGLES', i)
+        if 'data' in d and isinstance(d['data'], dict) and 'users' in d['data']:
+            print('colonnes :', d['data'].get('columns'))
+            print('nombre :', len(d['data']['users']))
+        else:
+            print(json.dumps(structure(d), ensure_ascii=False)[:800], str(d.get('message', ''))[:200])
+        res = post('/api/v5/segments/rules/users/resume', {'rules': jeu}, en_json=True)
+        print('résumé :', json.dumps(res, ensure_ascii=False)[:600])

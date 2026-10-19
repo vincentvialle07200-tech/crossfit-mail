@@ -5,6 +5,7 @@ on:
       pages: {description: 'Pages à lire', default: '/module/users,/modules/users/'}
       js: {description: 'Fichiers JS à fouiller', default: ''}
       appels: {description: 'Appels JSON (séparés par ;)', default: ''}
+      regles: {description: "Jeux de règles de segment (JSON)", default: ""}
 permissions: {contents: read}
 jobs:
   explorer:
@@ -19,3 +20,4 @@ jobs:
           PAGES: ${{ inputs.pages }}
           JS: ${{ inputs.js }}
           APPELS: ${{ inputs.appels }}
+          REGLES: ${{ inputs.regles }}
