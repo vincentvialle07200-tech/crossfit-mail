@@ -16,7 +16,7 @@ rw = {'ok': True, 'mois_kpi': 'septembre',
                       {'nom': 'Oumy Diouf', 'formule': 'ABONNEMENT ILLIMITE sans engagement', 'fin': (now + timedelta(days=5)).strftime('%Y-%m-%d')}],
       'anniversaires': ['Zakaria Yousfi'], 'nouveaux_7j': ['Agathe Gourdin', 'Axel Delaye', 'Lola Fichot'],
       'kpi': {'members': 258, 'members_win': 80, 'members_lost': 26, 'members_churn': 11.71, 'total': 41936, 'active_users': 885},
-      'kpi_prec': {'members': 251, 'total': 39800}}
+      'kpi_prec': {'members': 251, 'total': 39800}, 'jamais_venus': [{'nom': 'Léa Test', 'mobile': '+33600000000', 'email': ''}, {'nom': 'Hugo Test', 'mobile': '', 'email': ''}]}
 alertes = brief.calculer_alertes(mb, rw, now)
 donnees = {'date': brief.jour_fr(now), 'alertes': alertes, 'mails_urgents': [x['sujet'] for x in mb['urgents']],
            'mails_a_repondre': [x['sujet'] + ' — ' + x['de'] for x in mb['a_repondre']], 'factures_24h': [x['sujet'] for x in mb['compta']],

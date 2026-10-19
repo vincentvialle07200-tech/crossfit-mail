@@ -315,6 +315,11 @@ def rendre(b, maintenant):
         todo.append('📬 Répondre aux %d mails%s — drapeau dans la boîte de réception' % (len(mails), ' (%d brouillons prêts dans Brouillons)' % nb_br if nb_br else ''))
     if rw['ok'] and rw['expirent_7j']:
         todo.append('🔁 Proposer le renouvellement aux %d abonnements qui expirent sous 7 jours' % len(rw['expirent_7j']))
+    jv = rw.get('jamais_venus', []) if rw['ok'] else []
+    if jv:
+        noms = ', '.join(e(x['nom']) + (' ' + gris(e(x['mobile']))) if x['mobile'] else e(x['nom']) for x in jv[:5])
+        todo.append('📞 Contacter les <b>%d</b> personnes qui ont créé un compte ResaWod ces 60 jours sans jamais réserver : %s%s' % (
+            len(jv), noms, ' …' if len(jv) > 5 else ''))
     rel = rw.get('relances') if rw['ok'] else None
     if rel and rel.get('en_attente'):
         todo.append('🔁 Relire et envoyer les %d brouillons de relance des absents — dossier Brouillons' % rel['en_attente'])
@@ -371,7 +376,9 @@ def brief(forcer=False, apercu=False):
         if rw['ok']:
             try:
                 import relances
-                rw['relances'] = relances.stats(boite, relances.Segments(), maintenant)
+                seg = relances.Segments()
+                rw['jamais_venus'] = seg.jamais_venus(60)
+                rw['relances'] = relances.stats(boite, seg, maintenant)
                 rw['relances']['mode'] = (os.environ.get('RELANCES_MODE') or 'test').strip().lower()
             except Exception as e:
                 print('Stats relances indisponibles : %s' % type(e).__name__)
@@ -386,7 +393,7 @@ def brief(forcer=False, apercu=False):
             'mails_urgents': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['urgents']],
             'mails_a_repondre': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['a_repondre'][:15]],
             'factures_24h': [m['sujet'] for m in mb['compta']],
-            'resawod': rw if rw['ok'] else 'ResaWod indisponible',
+            'resawod': ({k: v for k, v in rw.items() if k != 'jamais_venus'} | {'comptes_crees_60j_jamais_venus': len(rw.get('jamais_venus', []))}) if rw['ok'] else 'ResaWod indisponible',
             'leviers_deja_donnes': [] if apercu else leviers_precedents(boite, maintenant),
         }
         ia = {'priorites': [], 'levier': ''}

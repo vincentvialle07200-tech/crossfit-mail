@@ -96,6 +96,14 @@ class Segments:
                 uniques.append(a)
         return uniques
 
+    def jamais_venus(self, jours=60):
+        """Comptes créés depuis `jours` jours sans aucune réservation (pour la to-do du brief)."""
+        cree = {"field_identifier": "created_at", "type": 4, "condition": "less_than_x_days_ago", "section": 1, "value": str(jours)}
+        tous = self.users(cree)
+        venus = self.users(cree, reservations_depuis(3650))
+        return [{'nom': u.get('full_name') or '', 'mobile': u.get('mobile') or '', 'email': u.get('email') or ''}
+                for uid, u in tous.items() if uid not in venus]
+
     def revenus(self, relances, maintenant):
         """Relancés qui ont réservé depuis leur relance."""
         n = 0
