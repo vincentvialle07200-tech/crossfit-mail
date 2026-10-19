@@ -7,3 +7,4 @@
   - Les dossiers `Tri IA/1 Urgent` et `2 À répondre` gardent une copie des mails importants ; l'original reste dans la boîte de réception avec son drapeau.
   - Pour que les réponses soient justes, complétez la fiche [Infos pour le tri IA](https://docs.google.com/document/d/1rMiDedCaHIw_qB2aviMkU7SQnjnrLEIjUNye99iOm4E/edit) (tarifs, essai, résiliation) : l'IA ne devine jamais ce qui est marqué [À COMPLÉTER].
   - Si vous voyez « ⚠️ Tri IA des mails en panne » dans la boîte : prévenir Vincent.
+- **19/10/2026 — La Salle CrossFit : relance des absents.** Chaque jour vers 10h, les adhérents actifs qui n'ont rien réservé depuis 14 jours (mais sont venus dans le mois) reçoivent un petit mail « tout va bien ? » depuis contact@ : 15 par jour maximum, une fois tous les 45 jours, « Répondez STOP » respecté. Leurs réponses arrivent dans la boîte, triées « À répondre » avec un brouillon. Le brief affiche « 🔁 Relances absents (30 j) : X envoyées · Y revenus ».
