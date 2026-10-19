@@ -100,7 +100,7 @@ def donnees_resawod(maintenant):
             'ok': True,
             'cours_du_jour': [{'heure': c['hourStartTimestamp'].strip(), 'nom': c['name'],
                                'inscrits': int(c['attending']), 'places': int(c['capacity'])} for c in cours],
-            'expirent_7j': [{'nom': e['name'], 'formule': e['membership'], 'fin': e['notFormattedValidUntil'][:10]} for e in expirent],
+            'expirent_7j': [{'id': str(e.get('userId')), 'nom': e['name'], 'formule': e['membership'], 'fin': e['notFormattedValidUntil'][:10]} for e in expirent],
             'anniversaires': anniv,
             'nouveaux_7j': nouveaux,
             'mois_kpi': MOIS[fin.month - 1],
@@ -153,21 +153,56 @@ def briefs_du_jour(boite, maintenant):
             if 'Brief La Salle CrossFit' in m['sujet']]
 
 
-def leviers_precedents(boite, maintenant):
-    """Leviers des briefs des 20 derniers jours (pour ne jamais répéter la même reco)."""
+def briefs_precedents(boite, maintenant, jours=30):
+    """Leviers déjà donnés et numéros déjà proposés à l'appel dans les briefs précédents (hors aujourd'hui)."""
     boite.selectionner('INBOX', lecture_seule=True)
-    uids = boite.chercher('SINCE', (maintenant - timedelta(days=20)).strftime('%d-%b-%Y'), 'SUBJECT', '"Brief La Salle CrossFit"')
-    out = []
-    for u in uids[-20:]:
+    uids = boite.chercher('SINCE', (maintenant - timedelta(days=jours)).strftime('%d-%b-%Y'),
+                          'BEFORE', maintenant.strftime('%d-%b-%Y'), 'SUBJECT', '"Brief La Salle CrossFit"')
+    leviers, appeles = [], {}
+    for u in uids[-40:]:
         data = boite.uid('FETCH', u, '(BODY.PEEK[])')
         brut = next((x[1] for x in data if isinstance(x, tuple)), b'')
         msg = tri.message_from_bytes(brut, policy=tri.policy.default)
+        try:
+            jour = parsedate_to_datetime(str(msg.get('Date'))).astimezone(PARIS).date()
+        except Exception:
+            jour = maintenant.date()
         partie = msg.get_body(preferencelist=('plain',))
         txt = partie.get_content() if partie else ''
         m = re.search(r'LEVIER CROISSANCE\s*\n(.+?)(\n\n|$)', txt, re.S)
         if m:
-            out.append(m.group(1).strip()[:300])
-    return out
+            leviers.append(m.group(1).strip()[:300])
+        for num in re.findall(r'0\d(?: \d\d){4}', txt):
+            appeles[num] = max(appeles.get(num, jour), jour)
+    return leviers[-20:], appeles
+
+
+def tel(mobile):
+    """+33617432631 → 06 17 43 26 31"""
+    n = re.sub(r'[^\d+]', '', mobile or '')
+    if n.startswith('+33'):
+        n = '0' + n[3:]
+    if len(n) == 10 and n.startswith('0'):
+        return ' '.join(n[i:i + 2] for i in range(0, 10, 2))
+    return mobile or ''
+
+
+def appels_du_jour(rw, mobiles, appeles, maintenant, maxi=5):
+    """5 appels maximum : abonnements qui se terminent (renouvellement), puis comptes jamais venus (essai).
+    Une personne déjà proposée n'est pas reproposée avant 5 jours (renouvellement) ou 30 jours (jamais venu)."""
+    out = []
+    def deja(num, jours):
+        d = appeles.get(num)
+        return d is not None and (maintenant.date() - d).days < jours
+    for x in sorted(rw.get('expirent_7j', []), key=lambda x: x['fin']):
+        num = tel(mobiles.get(x['id'], ''))
+        if num and not deja(num, 5):
+            out.append({'nom': x['nom'], 'tel': num, 'motif': 'abonnement fini le %s/%s → propose-lui de renouveler' % (x['fin'][8:10], x['fin'][5:7])})
+    for x in rw.get('jamais_venus', []):
+        num = tel(x['mobile'])
+        if num and not deja(num, 30):
+            out.append({'nom': x['nom'], 'tel': num, 'motif': 'compte créé, jamais venu → propose-lui une séance d\'essai'})
+    return out[:maxi]
 
 
 # ───────────────────────── Alertes (calculées, la plus grave en premier) ─────────────────────────
@@ -214,8 +249,10 @@ def ia_brief(donnees):
                   'cours collectifs WOD et Hyrox encadrés par des coachs. Ils se relaient selon les jours, ont peu de temps et lisent ce brief sur téléphone. '
                   'Données : alertes calculées, mails de la boîte de la salle, chiffres du logiciel ResaWod (cours du jour et remplissage, abonnements qui expirent, '
                   'nouveaux inscrits, KPI du dernier mois complet : abonnés, arrivées, départs, résiliation, chiffre d\'affaires). '
-                  'priorites : exactement 3 actions business pour aujourd\'hui, classées par impact sur le chiffre d\'affaires ou la rétention, les urgences d\'abord. '
-                  'action : commence par un verbe, 15 mots maximum, faisable en moins de 15 minutes à l\'accueil, nomme la personne ou le mail concerné si possible ; jamais de projet ni de campagne. '
+                  'Les appels du jour (appels_deja_prevus) et l\'envoi des brouillons de mails sont déjà dans la to-do : ne les répète pas. '
+                  'priorites : exactement 2 actions de CROISSANCE pour aujourd\'hui (remplir un créneau creux, demander un avis Google à un adhérent fidèle, '
+                  'publier une story sur un cours complet ou un PR, proposer le passage carnet → abonnement à un habitué, parrainage, Hyrox…), classées par impact sur le chiffre d\'affaires. '
+                  'action : impératif à la 2e personne (« Publie », « Demande »…), 15 mots maximum, faisable en 4 minutes maximum à l\'accueil, précise qui ou quoi exactement ; jamais de projet ni de campagne. '
                   'pourquoi : 15 mots maximum, avec le chiffre qui justifie. '
                   'levier : UNE recommandation de croissance concrète (remplissage des créneaux creux, conversion des essais, renouvellement des abonnements qui expirent, '
                   'rétention, passage sans engagement → avec engagement, parrainage, avis Google, Hyrox, offre saisonnière…), '
@@ -238,7 +275,7 @@ def ia_brief(donnees):
         data = json.loads(rep.read())
     texte = ''.join(b.get('text', '') for b in data.get('content', []) if b.get('type') == 'text')
     r = json.loads(texte)
-    r['priorites'] = r['priorites'][:3]
+    r['priorites'] = r['priorites'][:2]
     return r
 
 
@@ -307,27 +344,41 @@ def rendre(b, maintenant):
         agenda.append('🎂 Anniversaires : ' + e(', '.join(rw['anniversaires'])))
     h += section('📅 AGENDA DU JOUR', liste(agenda) if agenda else vide(gris('Rien de prévu.')))
 
-    # 🎯 To-do
-    todo = ['<b>' + e(p['action']) + '</b><br>' + gris(e(p['pourquoi'])) for p in ia.get('priorites', [])]
-    mails = mb['urgents'] + mb['a_repondre']
-    nb_br = len([m for m in mails if m['brouillon']])
-    if mails:
-        todo.append('📬 Répondre aux %d mails%s — drapeau dans la boîte de réception' % (len(mails), ' (%d brouillons prêts dans Brouillons)' % nb_br if nb_br else ''))
-    if rw['ok'] and rw['expirent_7j']:
-        todo.append('🔁 Proposer le renouvellement aux %d abonnements qui expirent sous 7 jours' % len(rw['expirent_7j']))
-    jv = rw.get('jamais_venus', []) if rw['ok'] else []
-    if jv:
-        noms = ', '.join(e(x['nom']) + (' ' + gris(e(x['mobile']))) if x['mobile'] else e(x['nom']) for x in jv[:5])
-        todo.append('📞 Contacter les <b>%d</b> personnes qui ont créé un compte ResaWod ces 60 jours sans jamais réserver : %s%s' % (
-            len(jv), noms, ' …' if len(jv) > 5 else ''))
+    # 🎯 To-do : directive, dans l'ordre, 20 minutes maximum
+    todo, minutes = [], 0
+    for m in mb['urgents'][:2]:
+        todo.append('🔴 <b>Réponds au mail urgent</b> « %s » de %s%s <span style="color:#888">(2 min)</span>' % (
+            e(m['sujet']), e(m['de']), ' — brouillon prêt' if m['brouillon'] else ''))
+        minutes += 2
+    appels = b.get('appels', [])
+    if appels:
+        lignes = ''.join('<li style="margin:3px 0"><b>%s</b> — <a href="tel:%s" style="color:#1a73e8">%s</a><br><span style="color:#888">%s</span></li>' % (
+            e(a['nom']), a['tel'].replace(' ', ''), e(a['tel']), e(a['motif'])) for a in appels)
+        todo.append('📞 <b>Appelle ces %d personnes</b> <span style="color:#888">(2 min chacune ; pas de réponse → SMS)</span>'
+                    '<ol style="margin:4px 0 0;padding-left:20px">%s</ol>' % (len(appels), lignes))
+        minutes += 2 * len(appels)
+    a_rep = len([m for m in mb['urgents'][2:] + mb['a_repondre'] if m['brouillon']])
     rel = rw.get('relances') if rw['ok'] else None
-    if rel and rel.get('en_attente'):
-        todo.append('🔁 Relire et envoyer les %d brouillons de relance des absents — dossier Brouillons' % rel['en_attente'])
+    n_rel = rel.get('en_attente', 0) if rel else 0
+    if a_rep or n_rel:
+        quoi = ' + '.join(x for x in ('%d réponse%s aux mails' % (a_rep, 's' if a_rep > 1 else '') if a_rep else '',
+                                       '%d relance%s d\'absents' % (n_rel, 's' if n_rel > 1 else '') if n_rel else '') if x)
+        t = 3 if mb['urgents'] else 4
+        todo.append('📬 <b>Ouvre Brouillons, relis et envoie</b> : %s <span style="color:#888">(%d min — s\'il en reste, la suite demain)</span>' % (quoi, t))
+        minutes += t
+    for i, p in enumerate(ia.get('priorites', [])[:2]):
+        if i and minutes + 4 > 19:
+            break  # 20 minutes maximum par jour, au moins une action de croissance
+        todo.append('🚀 <b>%s</b> <span style="color:#888">(4 min)</span><br><span style="color:#888">%s</span>' % (e(p['action']), e(p['pourquoi'])))
+        minutes += 4
     if rw['ok'] and rw['anniversaires']:
-        todo.append('🎂 Souhaiter l\'anniversaire de %s (2 min)' % e(', '.join(rw['anniversaires'])))
-    h += section('🎯 TO-DO DU JOUR', liste(todo) if todo else vide('RAS'))
+        todo.append('🎂 <b>Souhaite l\'anniversaire</b> de %s <span style="color:#888">(1 min)</span>' % e(', '.join(rw['anniversaires'])))
+        minutes += 1
+    h += section('🎯 TO-DO DU JOUR' + (' <span style="font-weight:400;color:#888">· ≈ %d min, dans l\'ordre</span>' % minutes if todo else ''),
+                 '<ol style="margin:0;padding-left:20px">' + ''.join('<li style="margin:8px 0">' + t + '</li>' for t in todo) + '</ol>' if todo else vide('RAS'))
 
     # 📬 Mails à traiter
+    mails = mb['urgents'] + mb['a_repondre']
     if mails:
         lignes = [('🔴 ' if m in mb['urgents'] else '🟠 ') + e(m['sujet']) + ' ' + gris('· ' + e(m['de']) + ' · ' + e(age(m['date'], maintenant)))
                   + (' <span style="color:#16a766">✓ brouillon</span>' if m['brouillon'] else '') for m in mails[:8]]
@@ -378,6 +429,7 @@ def brief(forcer=False, apercu=False):
                 import relances
                 seg = relances.Segments()
                 rw['jamais_venus'] = seg.jamais_venus(60)
+                rw['mobiles'] = seg.mobiles()
                 rw['relances'] = relances.stats(boite, seg, maintenant)
                 rw['relances']['mode'] = (os.environ.get('RELANCES_MODE') or 'test').strip().lower()
             except Exception as e:
@@ -393,15 +445,19 @@ def brief(forcer=False, apercu=False):
             'mails_urgents': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['urgents']],
             'mails_a_repondre': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['a_repondre'][:15]],
             'factures_24h': [m['sujet'] for m in mb['compta']],
-            'resawod': ({k: v for k, v in rw.items() if k != 'jamais_venus'} | {'comptes_crees_60j_jamais_venus': len(rw.get('jamais_venus', []))}) if rw['ok'] else 'ResaWod indisponible',
-            'leviers_deja_donnes': [] if apercu else leviers_precedents(boite, maintenant),
+            'resawod': ({k: v for k, v in rw.items() if k not in ('jamais_venus', 'mobiles')} | {'comptes_crees_60j_jamais_venus': len(rw.get('jamais_venus', []))}) if rw['ok'] else 'ResaWod indisponible',
+            'leviers_deja_donnes': [],
         }
+        leviers, appeles = ([], {}) if apercu else briefs_precedents(boite, maintenant)
+        donnees['leviers_deja_donnes'] = leviers
+        appels = appels_du_jour(rw, rw.get('mobiles', {}), appeles, maintenant) if rw['ok'] else []
+        donnees['appels_deja_prevus'] = ['%s : %s' % (a['nom'], a['motif']) for a in appels]
         ia = {'priorites': [], 'levier': ''}
         try:
             ia = ia_brief(donnees)
         except Exception as e:
             print('IA du brief indisponible : %s' % type(e).__name__)
-        corps = rendre({'jour': jour_fr(maintenant), 'boite': mb, 'resawod': rw, 'alertes': alertes, 'ia': ia}, maintenant)
+        corps = rendre({'jour': jour_fr(maintenant), 'boite': mb, 'resawod': rw, 'alertes': alertes, 'ia': ia, 'appels': appels}, maintenant)
         titre = '☀️ Brief %s · %s%s' % (tri.NOM_SALLE, jour_fr(maintenant), ' (mis à jour)' if mise_a_jour else '')
         if apercu:
             open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'apercu-brief.html'), 'w').write(corps)

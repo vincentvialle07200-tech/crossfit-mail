@@ -101,8 +101,17 @@ class Segments:
         cree = {"field_identifier": "created_at", "type": 4, "condition": "less_than_x_days_ago", "section": 1, "value": str(jours)}
         tous = self.users(cree)
         venus = self.users(cree, reservations_depuis(3650))
-        return [{'nom': u.get('full_name') or '', 'mobile': u.get('mobile') or '', 'email': u.get('email') or ''}
-                for uid, u in tous.items() if uid not in venus]
+        return sorted([{'id': uid, 'nom': u.get('full_name') or '', 'mobile': u.get('mobile') or '', 'email': u.get('email') or ''}
+                       for uid, u in tous.items() if uid not in venus], key=lambda x: -int(x['id']))  # plus récents d'abord
+
+    def mobiles(self):
+        """id → mobile des abonnés et carnets actifs."""
+        out = {}
+        for base in (ABONNEMENTS, CARNETS):
+            for uid, u in self.users(base).items():
+                if u.get('mobile'):
+                    out[uid] = u['mobile']
+        return out
 
     def revenus(self, relances, maintenant):
         """Relancés qui ont réservé depuis leur relance."""
