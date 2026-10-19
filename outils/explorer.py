@@ -34,11 +34,13 @@ for js in (os.environ.get('JS') or '').split(','):
 for appel in (os.environ.get('APPELS') or '').split(';'):
     if not appel:
         continue
+    complet = appel.endswith('!')  # métadonnées seulement (jamais sur une liste de personnes)
+    appel = appel.rstrip('!')
     chemin, _, params = appel.partition('?')
     p = dict(x.split('=', 1) for x in params.split('&') if '=' in x)
     try:
         d = r.get(chemin, **p)
         print('\n=== APPEL', appel)
-        print(json.dumps(structure(d), ensure_ascii=False)[:3000])
+        print(json.dumps(d if complet else structure(d), ensure_ascii=False)[:12000])
     except Exception as e:
         print('\n=== APPEL', appel, 'ERR', str(e)[:200])
