@@ -8,6 +8,10 @@ on:
         type: choice
         options: [brouillons, test, auto]
         default: brouillons
+      nettoyer:
+        description: "Retirer les brouillons de relance d'adhérents qui ne sont plus absents"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,3 +31,4 @@ jobs:
           RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
           RELANCES_MODE: ${{ inputs.mode }}
           FORCER: '1'
+          NETTOYER: ${{ inputs.nettoyer && '1' || '0' }}

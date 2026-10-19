@@ -1,9 +1,9 @@
 """
-La Salle CrossFit — Relance par mail des adhérents actifs absents depuis 14 à 30 jours
+La Salle CrossFit — Relance par mail des adhérents actifs sans réservation depuis au moins 30 jours
 (version ResaWod + IONOS de ~/the-gym-mail/Relances.gs)
 
 Chaque jour vers 10h (lancé par la boucle du tri) :
-  - liste ResaWod : abonnés / carnets actifs avec au moins une réservation sur 30 jours mais aucune sur 14 jours
+  - liste ResaWod : abonnés / carnets actifs sans aucune réservation depuis 30 jours
   - exclus : sans e-mail, demandes STOP (dossier « Tri IA/STOP marketing »), déjà relancés depuis moins de 45 jours
   - 15 mails par jour maximum : abonnés d'abord, absences les plus longues d'abord
   - mails rédigés par Claude, envoyés depuis contact@ (SMTP IONOS), copie dans « Objets envoyés »
@@ -73,18 +73,18 @@ class Segments:
         return self._cache[cle]
 
     def absents(self):
-        """Actifs avec une réservation sur 30 j mais aucune sur 14 j, avec une estimation de l'absence."""
+        """Abonnés / carnets actifs sans aucune réservation depuis 30 jours (choix du 19/10/2026 : au moins un mois)."""
         out = []
         for base, carnet in ((ABONNEMENTS, 0), (CARNETS, 1)):
+            actifs = self.users(base)
             r30 = self.users(base, reservations_depuis(30))
-            r21 = self.users(base, reservations_depuis(21))
-            r14 = self.users(base, reservations_depuis(14))
-            for uid, u in r30.items():
-                if uid in r14:
+            r60 = self.users(base, reservations_depuis(60))
+            for uid, u in actifs.items():
+                if uid in r30:
                     continue
                 out.append({'id': uid, 'prenom': (u.get('first_name') or u.get('full_name') or '').strip().split(' ')[0].capitalize(),
                             'nom': u.get('full_name') or '', 'email': (u.get('email') or '').strip().lower(),
-                            'jours': 17 if uid in r21 else 25, 'carnet': carnet,
+                            'jours': 45 if uid in r60 else 75, 'carnet': carnet,
                             'formule': str(u.get('vouchers') if carnet else u.get('memberships') or '')[:120]})
         vus, uniques = set(), []
         for a in out:  # un adhérent qui a abonnement + carnet n'est relancé qu'une fois
@@ -140,6 +140,21 @@ def historique(boite, jours=DELAI_J):
     return out
 
 
+def nettoyer(boite, ids_absents):
+    """Met à la corbeille les brouillons de relance (et leur trace du journal) d'adhérents qui ne sont plus absents."""
+    corbeille = boite.special('\\Trash', {'trash', 'corbeille'})
+    n = 0
+    for dossier in (boite.special('\\Drafts', {'drafts', 'brouillons'}), boite.chemin(tri.DOSSIERS['relances'])):
+        if not dossier or dossier not in boite.dossiers or not corbeille:
+            continue
+        boite.selectionner(dossier)
+        for u, m in boite.entetes(boite.chercher('HEADER', ENTETE, '""'), ENTETE).items():
+            if str(m.get(ENTETE)).strip() not in ids_absents:
+                boite.deplacer(u, corbeille)
+                n += 1
+    print('Nettoyage : %d brouillons/traces retirés (adhérents venus ce mois-ci).' % n)
+
+
 def brouillons_en_attente(boite):
     """Brouillons de relance pas encore envoyés par l'équipe."""
     dossier = boite.special('\\Drafts', {'drafts', 'brouillons'})
@@ -189,7 +204,7 @@ def rediger(candidats):
                 'required': ['id', 'objet', 'corps'], 'additionalProperties': False}}},
             'required': ['messages'], 'additionalProperties': False}}},
         'messages': [{'role': 'user', 'content': json.dumps([
-            {'id': a['id'], 'prenom': a['prenom'], 'absent_depuis': 'environ 3 semaines' if a['jours'] < 21 else 'environ 1 mois',
+            {'id': a['id'], 'prenom': a['prenom'], 'absent_depuis': 'plus d\'un mois' if a['jours'] < 60 else 'plus de 2 mois',
              'formule': 'carnet' if a['carnet'] else 'abonnement'} for a in candidats], ensure_ascii=False)}],
     }
     req = urllib.request.Request('https://api.anthropic.com/v1/messages', data=json.dumps(corps).encode(),
@@ -229,7 +244,7 @@ def recap_test(candidats, messages):
         h += ('<div style="border:1px solid #ddd;border-radius:8px;padding:10px 12px;margin:10px 0">'
               '<div style="color:#888;font-size:13px">À : %s &lt;%s&gt; · absent depuis %s · %s</div>'
               '<div style="margin:6px 0"><b>%s</b></div><div style="white-space:pre-wrap">%s</div></div>') % (
-            e(a['nom']), e(a['email']), 'environ 3 semaines' if a['jours'] < 21 else 'environ 1 mois',
+            e(a['nom']), e(a['email']), 'plus d\'un mois' if a['jours'] < 60 else 'plus de 2 mois',
             'carnet' if a['carnet'] else 'abonnement', e(m['objet']), e(m['corps'].strip() + PIED_RGPD))
     h += '</div>'
     msg = EmailMessage()
@@ -255,19 +270,22 @@ def relancer(forcer=False):
         boite.preparer_dossiers()
         if not forcer and deja_fait_aujourdhui(boite, maintenant, mode):
             return
+        seg = Segments()
+        if os.environ.get('NETTOYER') == '1':
+            nettoyer(boite, {a['id'] for a in seg.absents()})
         if mode == 'brouillons':
             attente = brouillons_en_attente(boite)
             if attente >= MAX_PAR_JOUR:
                 print('Relances : %d brouillons attendent déjà d\'être envoyés, rien de nouveau aujourd\'hui.' % attente)
                 return
-        seg = Segments()
+            places = MAX_PAR_JOUR - attente
         stop = adresses_stop(boite)
         recents = {r['id'] for r in historique(boite)}
         tous = seg.absents()
         candidats = [a for a in tous if a['email'] and '@' in a['email'] and a['email'] not in stop and a['id'] not in recents]
         candidats.sort(key=lambda a: (a['carnet'], -a['jours']))
-        candidats = candidats[:MAX_PAR_JOUR]
-        print('Relances (%s) : %d absents 14-30 j, %d à relancer aujourd\'hui (%d STOP, %d déjà relancés < %d j).' % (
+        candidats = candidats[:places if mode == 'brouillons' else MAX_PAR_JOUR]
+        print('Relances (%s) : %d absents depuis 30 j ou plus, %d à relancer aujourd\'hui (%d STOP, %d déjà relancés < %d j).' % (
             mode, len(tous), len(candidats), len(stop), len(recents), DELAI_J))
         if not candidats:
             return
