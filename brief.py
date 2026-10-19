@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 from email.message import EmailMessage
-from email.utils import formataddr, formatdate, parseaddr, parsedate_to_datetime
+from email.utils import formataddr, formatdate, getaddresses, parseaddr, parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 import tri
@@ -177,6 +177,30 @@ def briefs_precedents(boite, maintenant, jours=30):
     return leviers[-20:], appeles
 
 
+def correspondants(boite, jours=365):
+    """Adresses avec qui la salle a échangé par mail (reçus dans tous les dossiers, envoyés, brouillons) sur `jours` jours."""
+    depuis = (datetime.now(PARIS) - timedelta(days=jours)).strftime('%d-%b-%Y')
+    adresses = set()
+    envoyes = boite.special('\\Sent', {'sent', 'envoyés', 'objets envoyés'})
+    brouillons = boite.special('\\Drafts', {'drafts', 'brouillons'})
+    ignores = {boite.special(a, n) for a, n in (('\\Trash', {'trash', 'corbeille'}), ('\\Junk', {'spam', 'junk'}))}
+    for dossier, attr in list(boite.dossiers.items()):
+        if '\\Noselect' in attr or dossier in ignores:
+            continue
+        champs = 'TO CC' if dossier in (envoyes, brouillons) else 'FROM REPLY-TO'
+        try:
+            boite.selectionner(dossier, lecture_seule=True)
+            uids = boite.chercher('SINCE', depuis)
+            for i in range(0, len(uids), 500):
+                for m in boite.entetes(uids[i:i + 500], champs).values():
+                    for _, a in getaddresses([str(m.get(c) or '') for c in ('To', 'Cc', 'From', 'Reply-To')]):
+                        if a:
+                            adresses.add(a.lower())
+        except Exception:
+            continue
+    return adresses
+
+
 def tel(mobile):
     """+33617432631 → 06 17 43 26 31"""
     n = re.sub(r'[^\d+]', '', mobile or '')
@@ -187,9 +211,10 @@ def tel(mobile):
     return mobile or ''
 
 
-def appels_du_jour(rw, mobiles, appeles, maintenant, maxi=5):
+def appels_du_jour(rw, mobiles, appeles, maintenant, maxi=5, deja_en_contact=frozenset()):
     """5 appels maximum : abonnements qui se terminent (renouvellement), puis comptes jamais venus (essai).
-    Une personne déjà proposée n'est pas reproposée avant 5 jours (renouvellement) ou 30 jours (jamais venu)."""
+    Une personne déjà proposée n'est pas reproposée avant 5 jours (renouvellement) ou 30 jours (jamais venu).
+    Les comptes jamais venus avec qui la salle a déjà échangé par mail sont exclus (déjà en discussion)."""
     out = []
     def deja(num, jours):
         d = appeles.get(num)
@@ -200,6 +225,8 @@ def appels_du_jour(rw, mobiles, appeles, maintenant, maxi=5):
             out.append({'nom': x['nom'], 'tel': num, 'motif': 'abonnement fini le %s/%s → propose-lui de renouveler' % (x['fin'][8:10], x['fin'][5:7])})
     for x in rw.get('jamais_venus', []):
         num = tel(x['mobile'])
+        if (x.get('email') or '').lower() in deja_en_contact:
+            continue
         if num and not deja(num, 30):
             out.append({'nom': x['nom'], 'tel': num, 'motif': 'compte créé, jamais venu → propose-lui une séance d\'essai'})
     return out[:maxi]
@@ -450,7 +477,11 @@ def brief(forcer=False, apercu=False):
         }
         leviers, appeles = ([], {}) if apercu else briefs_precedents(boite, maintenant)
         donnees['leviers_deja_donnes'] = leviers
-        appels = appels_du_jour(rw, rw.get('mobiles', {}), appeles, maintenant) if rw['ok'] else []
+        en_contact = correspondants(boite) if rw['ok'] and rw.get('jamais_venus') else set()
+        appels = appels_du_jour(rw, rw.get('mobiles', {}), appeles, maintenant, deja_en_contact=en_contact) if rw['ok'] else []
+        if rw['ok'] and rw.get('jamais_venus'):
+            print('Appels : %d comptes jamais venus, %d exclus car déjà en discussion par mail.' % (
+                len(rw['jamais_venus']), len([x for x in rw['jamais_venus'] if (x.get('email') or '').lower() in en_contact])))
         donnees['appels_deja_prevus'] = ['%s : %s' % (a['nom'], a['motif']) for a in appels]
         ia = {'priorites': [], 'levier': ''}
         try:
