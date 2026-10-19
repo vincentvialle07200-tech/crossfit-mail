@@ -34,7 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from email import message_from_bytes, policy
 from email.message import EmailMessage
-from email.utils import formataddr, formatdate, getaddresses, make_msgid, parseaddr
+from email.utils import formataddr, formatdate, getaddresses, make_msgid, parseaddr, parsedate_to_datetime
 
 # ───────────────────────── Réglages ─────────────────────────
 NOM_SALLE = 'La Salle CrossFit'
@@ -402,6 +402,7 @@ def brouillon_reponse(msg, texte, corps_original):
         b['References'] = ' '.join(ids(msg.get('References')) + [mid])
     b['Date'] = formatdate(localtime=True)
     b['Message-ID'] = make_msgid(domain=os.environ['IMAP_USER'].split('@')[-1])
+    b['X-Tri-IA'] = 'brouillon'
     citation = '\n'.join('> ' + l for l in corps_original.splitlines()[:40])
     entete = 'Le %s, %s a écrit :' % (str(msg.get('Date') or ''), str(msg.get('From') or ''))
     b.set_content(texte.strip() + '\n\n' + entete + '\n' + citation + '\n')
@@ -414,7 +415,7 @@ def trier():
     boite = Boite(user, os.environ['IMAP_PASSWORD'])
     etat = charger_etat()
     stats = {c: 0 for c in CATEGORIES}
-    stats.update(brouillons=0, stop=0, erreurs=0, repondus=0, anciens_gardes=0)
+    stats.update(brouillons=0, stop=0, erreurs=0, repondus=0, anciens_gardes=0, brouillons_retires=0)
     try:
         boite.preparer_dossiers()
         brouillons = boite.special('\\Drafts', {'drafts', 'brouillons', 'entwürfe'})
@@ -422,34 +423,63 @@ def trier():
         depuis = (datetime.now() - timedelta(days=JOURS)).strftime('%d-%b-%Y')
         infos = lire_infos()
 
-        # Messages auxquels la salle a déjà répondu (dossier Envoyés) et brouillons existants
-        repondus, deja_brouillon = set(), set()
+        # Messages auxquels la salle a déjà répondu (dossier Envoyés, 60 jours) et brouillons existants.
+        # Une réponse compte si elle cite le mail (In-Reply-To / References) OU si un mail est parti vers
+        # la même personne après la réception (réponse écrite à part, depuis un téléphone, etc.).
+        repondus, deja_brouillon, envoye_a = set(), {}, {}
+        depuis_envoyes = (datetime.now() - timedelta(days=max(JOURS, 60))).strftime('%d-%b-%Y')
         if envoyes:
             boite.selectionner(envoyes, lecture_seule=True)
-            for m in boite.entetes(boite.chercher('SINCE', depuis), 'IN-REPLY-TO REFERENCES').values():
+            for m in boite.entetes(boite.chercher('SINCE', depuis_envoyes), 'IN-REPLY-TO REFERENCES TO CC DATE').values():
                 repondus.update(ids(m.get('In-Reply-To')) + ids(m.get('References')))
+                try:
+                    d = parsedate_to_datetime(str(m.get('Date'))).timestamp()
+                except Exception:
+                    continue
+                for _, a in getaddresses([str(m.get('To') or ''), str(m.get('Cc') or '')]):
+                    a = a.lower()
+                    if a and d > envoye_a.get(a, 0):
+                        envoye_a[a] = d
         if brouillons:
             boite.selectionner(brouillons, lecture_seule=True)
-            for m in boite.entetes(boite.chercher('SINCE', depuis), 'IN-REPLY-TO').values():
-                deja_brouillon.update(ids(m.get('In-Reply-To')))
+            for u, m in boite.entetes(boite.chercher('ALL'), 'IN-REPLY-TO').items():
+                for i in ids(m.get('In-Reply-To')):
+                    deja_brouillon[i] = u
+
+        def repondu(mid, de, date_recu):
+            return mid in repondus or envoye_a.get(adresse(de), 0) > (date_recu or 0)
 
         boite.selectionner('INBOX')
         mots_ok = '\\*' in str(boite.M.response('PERMANENTFLAGS')[1])
         print('Serveur : délimiteur %r, MOVE %s, mots-clés %s, Brouillons=%r, Envoyés=%r%s' % (
             boite.delim, 'MOVE' in boite.capas, mots_ok, brouillons, envoyes, ' — MODE TEST, rien n\'est modifié' if DRY_RUN else ''))
 
-        # Drapeaux à retirer : mail répondu (\Answered ou réponse dans Envoyés)
-        drapeaux = boite.entetes(boite.chercher('FLAGGED', 'KEYWORD', MOT_TRAITE, 'SINCE', depuis)
-                                 if mots_ok else [], 'MESSAGE-ID')
+        # Drapeaux à retirer (tous les mails suivis, pas seulement les 3 derniers jours) : mail répondu
+        drapeaux = boite.entetes(boite.chercher('FLAGGED', 'KEYWORD', MOT_TRAITE) if mots_ok else [], 'MESSAGE-ID FROM DATE')
+        rep_mids = set()
+        for u, m in list(drapeaux.items()):
+            mid = str(m.get('Message-ID') or '').strip()
+            try:
+                recu = parsedate_to_datetime(str(m.get('Date'))).timestamp()
+            except Exception:
+                recu = None
+            if repondu(mid, m.get('From'), recu):
+                boite.ecrire('STORE', u, '+FLAGS.SILENT', '(\\Answered)')
+                drapeaux.pop(u)
+                rep_mids.add(mid)
         for u in boite.chercher('FLAGGED', 'ANSWERED', 'KEYWORD', MOT_TRAITE) if mots_ok else []:
             boite.ecrire('STORE', u, '-FLAGS.SILENT', '(\\Flagged)')
             drapeaux.pop(u, None)
             stats['repondus'] += 1
-        for u, m in list(drapeaux.items()):
-            if str(m.get('Message-ID') or '').strip() in repondus:
-                boite.ecrire('STORE', u, '-FLAGS.SILENT', '(\\Flagged)')
-                drapeaux.pop(u)
-                stats['repondus'] += 1
+        # Brouillons IA devenus inutiles (le mail a eu une réponse) → corbeille (récupérables)
+        a_jeter = [deja_brouillon[i] for i in rep_mids if i in deja_brouillon]
+        corbeille = boite.special('\\Trash', {'trash', 'corbeille'})
+        if a_jeter and brouillons and corbeille and not DRY_RUN:
+            boite.selectionner(brouillons)
+            for u in a_jeter:
+                boite.deplacer(u, corbeille)
+            stats['brouillons_retires'] = len(a_jeter)
+            boite.selectionner('INBOX')
         flagges = {str(m.get('Message-ID') or '').strip(): u for u, m in drapeaux.items()}
 
         criteres = ['SINCE', depuis] + (['UNKEYWORD', MOT_TRAITE] if mots_ok else [])
@@ -554,10 +584,10 @@ def trier():
 
             if cat in ('urgent', 'a_repondre'):
                 boite.ecrire('COPY', u, q(boite.chemin(DOSSIERS[cat])))  # copie de suivi ; l'original reste dans la boîte de réception
-                deja_repondu = '\\Answered' in c['flags'] or mid in repondus
+                deja_repondu = '\\Answered' in c['flags'] or repondu(mid, msg.get('From'), c['date'])
                 if c['date'] >= recent and r.get('brouillon') and brouillons and mid not in deja_brouillon and not deja_repondu:
                     boite.ajouter(brouillons, brouillon_reponse(msg, r['brouillon'], c['corps']), '(\\Draft \\Seen)')
-                    deja_brouillon.add(mid)
+                    deja_brouillon[mid] = None
                     mots.append('TriIA_brouillon')
                     stats['brouillons'] += 1
                 if c['date'] >= a_flagger and not deja_repondu:

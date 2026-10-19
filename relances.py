@@ -2,7 +2,7 @@
 La Salle CrossFit — Relance par mail des adhérents actifs sans réservation depuis au moins 30 jours
 (version ResaWod + IONOS de ~/the-gym-mail/Relances.gs)
 
-Chaque jour vers 10h (lancé par la boucle du tri) :
+Chaque jour vers 9h (lancé par la boucle du tri) :
   - liste ResaWod : abonnés actifs + carnets actifs avec séances restantes, sans aucune réservation depuis 30 jours
   - exclus : sans e-mail, demandes STOP (dossier « Tri IA/STOP marketing »), déjà relancés depuis moins de 45 jours
   - 15 mails par jour maximum : abonnés d'abord, absences les plus longues d'abord
@@ -34,7 +34,7 @@ from brief import PARIS, RESAWOD, ResaWod
 
 MAX_PAR_JOUR = 15
 DELAI_J = 45
-HEURE_DEBUT, HEURE_FIN = 10, 13
+HEURE_DEBUT, HEURE_FIN = 9, 12
 SMTP = 'smtp.ionos.fr'
 ENTETE = 'X-Relance-Absent'
 PIED_RGPD = '\n\n—\nTu ne souhaites plus recevoir ce type de message ? Réponds simplement STOP.'
