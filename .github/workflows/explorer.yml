@@ -1,0 +1,21 @@
+name: Exploration ResaWod
+on:
+  workflow_dispatch:
+    inputs:
+      pages: {description: 'Pages à lire', default: '/module/users,/modules/users/'}
+      js: {description: 'Fichiers JS à fouiller', default: ''}
+      appels: {description: 'Appels JSON (séparés par ;)', default: ''}
+permissions: {contents: read}
+jobs:
+  explorer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 outils/explorer.py
+        env:
+          RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
+          RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
+          PAGES: ${{ inputs.pages }}
+          JS: ${{ inputs.js }}
+          APPELS: ${{ inputs.appels }}
