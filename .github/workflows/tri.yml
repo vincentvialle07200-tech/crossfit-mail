@@ -43,6 +43,7 @@ jobs:
           while [ $(( $(date +%s) - debut )) -lt 20700 ]; do
             python3 tri.py && echecs=0 || echecs=$((echecs+1))
             python3 brief.py || echo "Brief : échec"
+            python3 relances.py || echo "Relances : échec"
             [ $echecs -ge 3 ] && exit 1
             sleep 600
           done
@@ -53,6 +54,7 @@ jobs:
           RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
           RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
           INFOS_URL: ${{ vars.INFOS_URL }}
+          RELANCES_MODE: ${{ vars.RELANCES_MODE }}
           DRY_RUN: ${{ inputs.test && '1' || '0' }}
           JOURS: ${{ inputs.menage && '3650' || '3' }}
           MAX_MAILS: ${{ inputs.menage && '4000' || '40' }}

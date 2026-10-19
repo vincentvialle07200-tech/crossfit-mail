@@ -289,6 +289,11 @@ def rendre(b, maintenant):
         else:
             chiffres.append('Aujourd\'hui : pas de cours au planning')
         chiffres.append('7 jours : <b>%d</b> nouveaux inscrits · <b>%d</b> abonnements qui expirent' % (len(rw['nouveaux_7j']), len(rw['expirent_7j'])))
+        rel = rw.get('relances')
+        if rel and rel['envoyees']:
+            chiffres.append('🔁 Relances absents (30 j) : <b>%d</b> envoyées · <b>%d</b> revenus' % (rel['envoyees'], rel['revenus']))
+        elif rel and not rel['auto']:
+            chiffres.append('🔁 Relances absents : ' + gris('mode test, récap dans la boîte vers 10h'))
     h += section('📊 CHIFFRES CLÉS', liste(chiffres) if chiffres else vide(gris('⚠️ ResaWod : source indisponible')))
 
     # 🚨 Alertes
@@ -360,6 +365,13 @@ def brief(forcer=False, apercu=False):
                 return
             mise_a_jour = bool(deja)  # le brief de 7h était incomplet (ResaWod indisponible)
         rw = donnees_resawod(maintenant)
+        if rw['ok']:
+            try:
+                import relances
+                rw['relances'] = relances.stats(boite, relances.Segments(), maintenant)
+                rw['relances']['auto'] = (os.environ.get('RELANCES_MODE') or 'test').strip().lower() == 'auto'
+            except Exception as e:
+                print('Stats relances indisponibles : %s' % type(e).__name__)
         if mise_a_jour and not rw['ok']:
             print('ResaWod toujours indisponible, pas de mise à jour.')
             return

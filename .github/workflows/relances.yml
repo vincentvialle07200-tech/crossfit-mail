@@ -1,0 +1,29 @@
+name: Relances absents (à la main)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "test = récap dans la boîte seulement ; auto = envoi aux adhérents"
+        type: choice
+        options: [test, auto]
+        default: test
+
+permissions:
+  contents: read
+
+jobs:
+  relances:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 relances.py
+        env:
+          IMAP_USER: ${{ vars.IMAP_USER }}
+          IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
+          RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
+          RELANCES_MODE: ${{ inputs.mode }}
+          FORCER: '1'
