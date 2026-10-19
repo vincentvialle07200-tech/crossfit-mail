@@ -34,7 +34,7 @@ for js in (os.environ.get('JS') or '').split(','):
 for appel in (os.environ.get('APPELS') or '').split(';'):
     if not appel:
         continue
-    complet = appel.endswith('!')  # métadonnées seulement (jamais sur une liste de personnes)
+    complet = appel.endswith('!') and not re.search(r'users|members|resume|bookings', appel)  # métadonnées seulement
     appel = appel.rstrip('!')
     chemin, _, params = appel.partition('?')
     p = dict(x.split('=', 1) for x in params.split('&') if '=' in x)
@@ -66,4 +66,4 @@ if regles:
         else:
             print(json.dumps(structure(d), ensure_ascii=False)[:800], str(d.get('message', ''))[:200])
         res = post('/api/v5/segments/rules/users/resume', {'rules': jeu}, en_json=True)
-        print('résumé :', json.dumps(res, ensure_ascii=False)[:600])
+        print('résumé (structure) :', json.dumps(structure(res), ensure_ascii=False)[:300])
