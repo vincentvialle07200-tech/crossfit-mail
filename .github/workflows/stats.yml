@@ -1,0 +1,19 @@
+name: Statistiques inscrits (totaux seulement)
+on:
+  workflow_dispatch:
+    inputs:
+      jours: {description: 'Période en jours', default: '183'}
+permissions: {contents: read}
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 outils/stats_inscrits.py
+        env:
+          IMAP_USER: ${{ vars.IMAP_USER }}
+          RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
+          RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JOURS: ${{ inputs.jours }}
