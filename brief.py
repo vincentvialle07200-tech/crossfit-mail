@@ -457,8 +457,10 @@ def brief(forcer=False, apercu=False):
                 seg = relances.Segments()
                 rw['jamais_venus'] = seg.jamais_venus(60)
                 rw['mobiles'] = seg.mobiles()
-                rw['relances'] = relances.stats(boite, seg, maintenant)
-                rw['relances']['mode'] = (os.environ.get('RELANCES_MODE') or 'test').strip().lower()
+                mode_rel = (os.environ.get('RELANCES_MODE') or 'test').strip().lower()
+                if mode_rel not in ('off', 'arret', 'arrêt'):
+                    rw['relances'] = relances.stats(boite, seg, maintenant)
+                    rw['relances']['mode'] = mode_rel
             except Exception as e:
                 print('Stats relances indisponibles : %s' % type(e).__name__)
         if mise_a_jour and not rw['ok']:

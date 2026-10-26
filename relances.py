@@ -279,6 +279,8 @@ def recap_test(candidats, messages):
 
 def relancer(forcer=False):
     mode = (os.environ.get('RELANCES_MODE') or 'test').strip().lower()
+    if mode in ('off', 'arret', 'arrêt'):
+        return  # relances arrêtées (décision de Vincent le 26/10/2026)
     maintenant = datetime.now(PARIS)
     if not forcer and not (HEURE_DEBUT <= maintenant.hour < HEURE_FIN):
         return
