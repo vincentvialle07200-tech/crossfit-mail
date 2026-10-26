@@ -57,6 +57,9 @@ DOSSIERS = {
     'relances': 'Relances absents',
 }
 CATEGORIES = ['urgent', 'a_repondre', 'compta', 'info', 'pub']
+# Dossiers réellement utilisés (26/10/2026 : plus de copies Urgent / À répondre, les pubs vont à la corbeille)
+DOSSIERS_UTILISES = ['compta', 'info', 'stop']
+ANCIENS_DOSSIERS = ['urgent', 'a_repondre', 'pub']
 MOT_TRAITE = 'TriIA'           # mot-clé IMAP posé sur chaque mail traité
 
 DRY_RUN = os.environ.get('DRY_RUN') == '1'
@@ -302,7 +305,7 @@ class Boite:
         return utf7(RACINE + self.delim + sous)
 
     def preparer_dossiers(self):
-        voulus = [utf7(RACINE)] + [self.chemin(s) for s in DOSSIERS.values()]
+        voulus = [utf7(RACINE)] + [self.chemin(DOSSIERS[k]) for k in DOSSIERS_UTILISES]
         for nom in voulus:
             if nom not in self.dossiers:
                 if DRY_RUN:
@@ -418,6 +421,7 @@ def trier():
     stats.update(brouillons=0, stop=0, erreurs=0, repondus=0, anciens_gardes=0, brouillons_retires=0)
     try:
         boite.preparer_dossiers()
+        corbeille = boite.special('\\Trash', {'trash', 'corbeille'})
         brouillons = boite.special('\\Drafts', {'drafts', 'brouillons', 'entwürfe'})
         envoyes = boite.special('\\Sent', {'sent', 'envoyés', 'éléments envoyés', 'gesendete objekte', 'sent items'})
         depuis = (datetime.now() - timedelta(days=JOURS)).strftime('%d-%b-%Y')
@@ -473,7 +477,6 @@ def trier():
             stats['repondus'] += 1
         # Brouillons IA devenus inutiles (le mail a eu une réponse) → corbeille (récupérables)
         a_jeter = [deja_brouillon[i] for i in rep_mids if i in deja_brouillon]
-        corbeille = boite.special('\\Trash', {'trash', 'corbeille'})
         if a_jeter and brouillons and corbeille and not DRY_RUN:
             boite.selectionner(brouillons)
             for u in a_jeter:
@@ -583,7 +586,6 @@ def trier():
                 boite.ecrire('COPY', u, q(boite.chemin(DOSSIERS['stop'])))
 
             if cat in ('urgent', 'a_repondre'):
-                boite.ecrire('COPY', u, q(boite.chemin(DOSSIERS[cat])))  # copie de suivi ; l'original reste dans la boîte de réception
                 deja_repondu = '\\Answered' in c['flags'] or repondu(mid, msg.get('From'), c['date'])
                 if c['date'] >= recent and r.get('brouillon') and brouillons and mid not in deja_brouillon and not deja_repondu:
                     boite.ajouter(brouillons, brouillon_reponse(msg, r['brouillon'], c['corps']), '(\\Draft \\Seen)')
@@ -600,13 +602,41 @@ def trier():
                 if cat == 'pub':
                     boite.ecrire('STORE', u, '+FLAGS.SILENT', '(\\Seen)')
                 marquer(c, *mots)
-                boite.deplacer(u, boite.chemin(DOSSIERS[cat]))
+                if cat == 'pub':
+                    if corbeille:
+                        boite.deplacer(u, corbeille)  # pubs supprimées (récupérables dans la corbeille)
+                else:
+                    boite.deplacer(u, boite.chemin(DOSSIERS[cat]))
     finally:
         if not DRY_RUN:
             sauver_etat(etat)
         boite.fermer()
     print('Bilan : ' + (', '.join('%s %d' % (k, v) for k, v in stats.items() if v) or 'rien de nouveau'))
     return stats
+
+
+def nettoyer_doublons():
+    """Une fois : met à la corbeille les copies (1 Urgent, 2 À répondre) et les pubs rangées (5 Pub & notifs),
+    puis supprime ces dossiers devenus inutiles. Les originaux restent dans la boîte de réception."""
+    boite = Boite(os.environ['IMAP_USER'], os.environ['IMAP_PASSWORD'])
+    try:
+        corbeille = boite.special('\\Trash', {'trash', 'corbeille'})
+        for k in ANCIENS_DOSSIERS:
+            dossier = boite.chemin(DOSSIERS[k])
+            if dossier not in boite.dossiers or not corbeille:
+                continue
+            boite.selectionner(dossier)
+            uids = boite.chercher('ALL')
+            if k == 'pub' and uids:
+                boite.uid('STORE', b','.join(uids), '+FLAGS.SILENT', '(\\Seen)')
+            for i in range(0, len(uids), 200):
+                lot = b','.join(uids[i:i + 200])
+                boite.deplacer(lot, corbeille)
+            boite.M.close()
+            boite.M.unsubscribe(q(dossier))
+            print('%s : %d mails mis à la corbeille, dossier supprimé (%s)' % (DOSSIERS[k], len(uids), boite.M.delete(q(dossier))[0]))
+    finally:
+        boite.fermer()
 
 
 def alerter(erreur):
@@ -639,6 +669,8 @@ if __name__ == '__main__':
     manquantes = [v for v in ('IMAP_USER', 'IMAP_PASSWORD', 'ANTHROPIC_API_KEY') if not os.environ.get(v)]
     if manquantes:
         sys.exit('Variables manquantes : ' + ', '.join(manquantes))
+    if os.environ.get('NETTOYER_DOUBLONS') == '1':
+        nettoyer_doublons()
     try:
         trier()
     except Exception as e:

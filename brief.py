@@ -142,7 +142,8 @@ def donnees_boite(boite, maintenant):
     d['compta'] = entetes_dossier(boite, boite.chemin(tri.DOSSIERS['compta']), 'SINCE', hier)
     infos = entetes_dossier(boite, boite.chemin(tri.DOSSIERS['info']), 'SINCE', hier)
     d['avis'] = [m for m in infos if 'google' in m['adresse'] and re.search(r'avis|review|note', m['sujet'], re.I)]
-    d['pubs_24h'] = len(entetes_dossier(boite, boite.chemin(tri.DOSSIERS['pub']), 'SINCE', hier))
+    corbeille = boite.special('\\Trash', {'trash', 'corbeille'})
+    d['pubs_24h'] = len(entetes_dossier(boite, corbeille, 'KEYWORD', 'TriIA_pub', 'SINCE', hier)) if corbeille else 0
     d['stop'] = entetes_dossier(boite, 'INBOX', 'KEYWORD', 'TriIA_stop', 'SINCE', hier)
     return d
 
@@ -423,7 +424,7 @@ def rendre(b, maintenant):
     pied = []
     if mb['compta']:
         pied.append('💶 Compta reçue : ' + ' · '.join(e(m['sujet']) for m in mb['compta'][:6]) + (' …' if len(mb['compta']) > 6 else ''))
-    pied.append('%d pubs rangées en 24 h · <a href="%s" style="color:#1a73e8">Boîte mail</a> · <a href="https://sport.nubapp.com/index.php" style="color:#1a73e8">ResaWod</a>' % (mb['pubs_24h'], WEBMAIL))
+    pied.append('%d pubs supprimées en 24 h · <a href="%s" style="color:#1a73e8">Boîte mail</a> · <a href="https://sport.nubapp.com/index.php" style="color:#1a73e8">ResaWod</a>' % (mb['pubs_24h'], WEBMAIL))
     h += '<p style="margin:24px 0 0;font-size:13px;color:#888">' + '<br>'.join(pied) + '</p></div>'
     return h
 
