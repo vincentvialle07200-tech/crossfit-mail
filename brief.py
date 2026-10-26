@@ -212,13 +212,17 @@ def tel(mobile):
 
 
 def appels_du_jour(rw, mobiles, appeles, maintenant, maxi=5, deja_en_contact=frozenset()):
-    """5 appels maximum : abonnements qui se terminent (renouvellement), puis comptes jamais venus (essai).
+    """5 appels maximum : abonnements / carnets finis non renouvelés, puis abonnements qui se terminent, puis comptes jamais venus.
     Une personne déjà proposée n'est pas reproposée avant 5 jours (renouvellement) ou 30 jours (jamais venu).
     Les comptes jamais venus avec qui la salle a déjà échangé par mail sont exclus (déjà en discussion)."""
     out = []
     def deja(num, jours):
         d = appeles.get(num)
         return d is not None and (maintenant.date() - d).days < jours
+    for x in rw.get('fins', []):  # d'abord le chiffre d'affaires déjà perdu
+        num = tel(x['mobile'])
+        if num and not deja(num, 7):
+            out.append({'nom': x['nom'], 'tel': num, 'motif': x['motif']})
     for x in sorted(rw.get('expirent_7j', []), key=lambda x: x['fin']):
         num = tel(mobiles.get(x['id'], ''))
         if num and not deja(num, 5):
@@ -456,6 +460,8 @@ def brief(forcer=False, apercu=False):
                 import relances
                 seg = relances.Segments()
                 rw['jamais_venus'] = seg.jamais_venus(60)
+                rw['fins'] = seg.fins_non_renouvelees(14)
+                print('Fins non renouvelées (14 j) : %d' % len(rw['fins']))
                 rw['mobiles'] = seg.mobiles()
                 mode_rel = (os.environ.get('RELANCES_MODE') or 'test').strip().lower()
                 if mode_rel not in ('off', 'arret', 'arrêt'):
@@ -474,7 +480,7 @@ def brief(forcer=False, apercu=False):
             'mails_urgents': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['urgents']],
             'mails_a_repondre': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['a_repondre'][:15]],
             'factures_24h': [m['sujet'] for m in mb['compta']],
-            'resawod': ({k: v for k, v in rw.items() if k not in ('jamais_venus', 'mobiles')} | {'comptes_crees_60j_jamais_venus': len(rw.get('jamais_venus', []))}) if rw['ok'] else 'ResaWod indisponible',
+            'resawod': ({k: v for k, v in rw.items() if k not in ('jamais_venus', 'mobiles', 'fins')} | {'comptes_crees_60j_jamais_venus': len(rw.get('jamais_venus', [])), 'abonnements_carnets_finis_non_renouveles_14j': len(rw.get('fins', []))}) if rw['ok'] else 'ResaWod indisponible',
             'leviers_deja_donnes': [],
         }
         leviers, appeles = ([], {}) if apercu else briefs_precedents(boite, maintenant)

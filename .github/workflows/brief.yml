@@ -7,6 +7,10 @@ on:
         description: "Déposer un brief maintenant (même s'il a déjà été envoyé aujourd'hui)"
         type: boolean
         default: true
+      apercu:
+        description: "Aperçu seulement (rien n'est déposé dans la boîte)"
+        type: boolean
+        default: false
 
 concurrency:
   group: brief
@@ -30,3 +34,4 @@ jobs:
           RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
           RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
           FORCER: ${{ inputs.forcer && '1' || '0' }}
+          APERCU: ${{ inputs.apercu && '1' || '0' }}

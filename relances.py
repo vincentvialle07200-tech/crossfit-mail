@@ -104,6 +104,24 @@ class Segments:
         return sorted([{'id': uid, 'nom': u.get('full_name') or '', 'mobile': u.get('mobile') or '', 'email': u.get('email') or ''}
                        for uid, u in tous.items() if uid not in venus], key=lambda x: -int(x['id']))  # plus récents d'abord
 
+    def fins_non_renouvelees(self, jours=14):
+        """Abonnements finis depuis `jours` jours sans nouvel abonnement, et carnets épuisés récemment
+        (plus aucune séance, venu dans les 30 derniers jours) sans nouveau carnet ni abonnement."""
+        fin_abo = {"field_identifier": "valid_until", "type": 4, "condition": "less_than_x_days_ago", "section": 2,
+                   "value": str(jours), "id_memberships": ABONNEMENTS['id_memberships'], "all_items_selected": True}
+        abonnes = self.users(ABONNEMENTS)
+        avec_seances = self.users(CARNETS, SEANCES_RESTANTES)
+        out = []
+        for uid, u in self.users(fin_abo).items():
+            if uid not in abonnes and uid not in avec_seances:
+                out.append((uid, u, 'abonnement terminé, pas renouvelé → propose-lui de reprendre'))
+        recents = self.users(reservations_depuis(30))
+        for uid, u in self.users(CARNETS).items():
+            if uid not in avec_seances and uid not in abonnes and uid in recents:
+                out.append((uid, u, 'carnet terminé, pas renouvelé → propose un nouveau carnet ou un abonnement'))
+        return [{'id': uid, 'nom': u.get('full_name') or '', 'mobile': u.get('mobile') or '', 'email': u.get('email') or '', 'motif': m}
+                for uid, u, m in out]
+
     def mobiles(self):
         """id → mobile des abonnés et carnets actifs."""
         out = {}
