@@ -9,7 +9,7 @@ Version IMAP du tri THE GYM (~/the-gym-mail/Code.gs). Tourne sur GitHub Actions 
 Dans la boîte :
   - Urgent et À répondre → restent dans la boîte de réception, avec un drapeau
   - Compta, Info → rangés dans « Tri IA/3 Compta », « Tri IA/4 Info » (non lus conservés)
-  - Pubs & notifs → rangées dans « Tri IA/5 Pub & notifs » et marquées lues
+  - Pubs → corbeille (marquées lues), SAUF ATHX et mails à identifiants / mot de passe → Info
   - Demande STOP → copie dans « Tri IA/STOP marketing »
 Rien n'est jamais envoyé ni supprimé.
 
@@ -90,6 +90,7 @@ def consignes(infos):
         '- compta : facture, reçu, devis, relevé, avoir, URSSAF, impôts, banque, assurance, fournisseur à payer.',
         '- info : notification utile sans réponse à faire (logiciel de réservation ResaWod, avis Google, nouvelle inscription, confirmation, alerte de compte).',
         '- pub : newsletter, promotion, prospection commerciale non sollicitée, notifications de réseaux sociaux sans importance.',
+        '- JAMAIS pub : les mails ATHX et tout mail contenant des identifiants, un mot de passe, un code de connexion ou la création d\'un compte → info (ou a_repondre si une réponse est attendue).',
         '',
         'BROUILLON (seulement pour urgent et a_repondre)',
         '- Français, chaleureux, direct. TUTOIEMENT par défaut avec les adhérents, prospects et particuliers (esprit box de CrossFit) ; vouvoiement seulement pour les fournisseurs, entreprises, partenaires professionnels et administrations. 3 à 8 lignes. Commence par « Bonjour <prénom>, » si le prénom est connu.',
@@ -367,6 +368,17 @@ class Boite:
             pass
 
 
+# Jamais à la corbeille (demande de Vincent, 27/10/2026) : ATHX et tout mail avec identifiants / mot de passe / code
+PROTEGE = re.compile(r"athx|identifiant|mot[s]? de passe|mot-de-passe|password|passcode|login|nom d.utilisateur|username"
+                     r"|code (de |d.)?(v[ée]rification|confirmation|s[ée]curit[ée]|connexion|acc[èe]s|activation)|verification code"
+                     r"|activ\w* (de |à )?(votre|ton) compte|cr[ée]ation de (votre|ton) compte|r[ée]initialis|reset"
+                     r"|acc[èe]s [àa] (votre|ton) (compte|espace)|authentification|2fa|otp\b", re.I)
+
+
+def protege(msg, corps=''):
+    return bool(PROTEGE.search(' '.join([str(msg.get('From', '')), str(msg.get('Subject', '')), corps or ''])))
+
+
 # ───────────────────────── Lecture des mails ─────────────────────────
 def texte_mail(msg):
     try:
@@ -569,6 +581,8 @@ def trier():
             r = c['r']
             if r['stop_marketing'] and r['categorie'] not in ('urgent', 'a_repondre'):
                 r['categorie'] = 'a_repondre'  # demande STOP : drapeau + brouillon de confirmation
+            if r['categorie'] == 'pub' and protege(msg, c['corps']):
+                r['categorie'] = 'info'  # ATHX ou identifiants : rangé dans Info, jamais supprimé
             cat = r['categorie']
             stats[cat] += 1
             if DETAILS:
