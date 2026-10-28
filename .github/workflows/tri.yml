@@ -17,6 +17,9 @@ on:
         description: "Grand ménage : trier tout l'historique de la boîte de réception"
         type: boolean
         default: false
+      rapatrier:
+        description: "Remettre en boîte de réception Compta / Info depuis N jours (0 = rien, 3650 = tout)"
+        default: '0'
       restaurer:
         description: "Une fois : sortir de la corbeille ATHX et les mails à identifiants classés pub"
         type: boolean
@@ -46,6 +49,7 @@ jobs:
 
       - name: Trier la boîte (toutes les 10 min pendant ~5h50) + brief de 7h
         run: |
+          if [ "${JOURS_RAPATRIER:-0}" != "0" ]; then python3 outils/rapatrier.py || exit 1; fi
           if [ "$RESTAURER" = "1" ]; then python3 outils/restaurer.py || exit 1; fi
           if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then python3 tri.py; exit $?; fi
           debut=$(date +%s); echecs=0
@@ -67,6 +71,7 @@ jobs:
           DRY_RUN: ${{ inputs.test && '1' || '0' }}
           NETTOYER_DOUBLONS: ${{ inputs.nettoyer_doublons && '1' || '0' }}
           RESTAURER: ${{ inputs.restaurer && '1' || '0' }}
+          JOURS_RAPATRIER: ${{ inputs.rapatrier || '0' }}
           JOURS: ${{ inputs.menage && '3650' || '3' }}
           MAX_MAILS: ${{ inputs.menage && '4000' || '40' }}
           QUOTA_IA: ${{ inputs.menage && '4000' || '300' }}

@@ -8,7 +8,7 @@ Version IMAP du tri THE GYM (~/the-gym-mail/Code.gs). Tourne sur GitHub Actions 
 
 Dans la boîte :
   - Urgent et À répondre → restent dans la boîte de réception, avec un drapeau
-  - Compta, Info → rangés dans « Tri IA/3 Compta », « Tri IA/4 Info » (non lus conservés)
+  - Compta, Info → restent dans la boîte de réception (mot-clé seulement) ; seules les pubs en sortent
   - Pubs → corbeille (marquées lues), SAUF ATHX et mails à identifiants / mot de passe → Info
   - Demande STOP → copie dans « Tri IA/STOP marketing »
 Rien n'est jamais envoyé ni supprimé.
@@ -58,7 +58,7 @@ DOSSIERS = {
 }
 CATEGORIES = ['urgent', 'a_repondre', 'compta', 'info', 'pub']
 # Dossiers réellement utilisés (26/10/2026 : plus de copies Urgent / À répondre, les pubs vont à la corbeille)
-DOSSIERS_UTILISES = ['compta', 'info', 'stop']
+DOSSIERS_UTILISES = ['stop']  # 28/10/2026 : Compta et Info restent dans la boîte de réception (mot-clé seulement)
 ANCIENS_DOSSIERS = ['urgent', 'a_repondre', 'pub']
 MOT_TRAITE = 'TriIA'           # mot-clé IMAP posé sur chaque mail traité
 
@@ -368,11 +368,16 @@ class Boite:
             pass
 
 
-# Jamais à la corbeille (demande de Vincent, 27/10/2026) : ATHX et tout mail avec identifiants / mot de passe / code
-PROTEGE = re.compile(r"athx|identifiant|mot[s]? de passe|mot-de-passe|password|passcode|login|nom d.utilisateur|username"
+# Jamais à la corbeille (demandes de Vincent, 27-28/10/2026) : ATHX, Fit & Rack, tout mail avec identifiants / mot de passe / code,
+# et tout expéditeur à qui la salle a déjà écrit (fournisseurs, partenaires : voir connu() dans trier())
+PROTEGE = re.compile(r"athx|fit\s*(&|and|n|et|-)?\s*rack|identifiant|mot[s]? de passe|mot-de-passe|password|passcode|login|nom d.utilisateur|username"
                      r"|code (de |d.)?(v[ée]rification|confirmation|s[ée]curit[ée]|connexion|acc[èe]s|activation)|verification code"
                      r"|activ\w* (de |à )?(votre|ton) compte|cr[ée]ation de (votre|ton) compte|r[ée]initialis|reset"
                      r"|acc[èe]s [àa] (votre|ton) (compte|espace)|authentification|2fa|otp\b", re.I)
+
+
+GENERIQUES = {'gmail.com', 'hotmail.com', 'hotmail.fr', 'outlook.com', 'outlook.fr', 'live.fr', 'live.com', 'yahoo.fr', 'yahoo.com',
+              'orange.fr', 'wanadoo.fr', 'free.fr', 'sfr.fr', 'laposte.net', 'icloud.com', 'me.com', 'bbox.fr', 'neuf.fr', 'gmx.fr'}
 
 
 def protege(msg, corps=''):
@@ -443,7 +448,7 @@ def trier():
         # Une réponse compte si elle cite le mail (In-Reply-To / References) OU si un mail est parti vers
         # la même personne après la réception (réponse écrite à part, depuis un téléphone, etc.).
         repondus, deja_brouillon, envoye_a = set(), {}, {}
-        depuis_envoyes = (datetime.now() - timedelta(days=max(JOURS, 60))).strftime('%d-%b-%Y')
+        depuis_envoyes = (datetime.now() - timedelta(days=max(JOURS, 365))).strftime('%d-%b-%Y')
         if envoyes:
             boite.selectionner(envoyes, lecture_seule=True)
             for m in boite.entetes(boite.chercher('SINCE', depuis_envoyes), 'IN-REPLY-TO REFERENCES TO CC DATE').values():
@@ -461,6 +466,12 @@ def trier():
             for u, m in boite.entetes(boite.chercher('ALL'), 'IN-REPLY-TO').items():
                 for i in ids(m.get('In-Reply-To')):
                     deja_brouillon[i] = u
+
+        domaines_connus = {a.split('@')[-1] for a in envoye_a if '@' in a} - GENERIQUES
+
+        def connu(de):
+            a = adresse(de)
+            return a in envoye_a or a.split('@')[-1] in domaines_connus
 
         def repondu(mid, de, date_recu):
             return mid in repondus or envoye_a.get(adresse(de), 0) > (date_recu or 0)
@@ -581,8 +592,8 @@ def trier():
             r = c['r']
             if r['stop_marketing'] and r['categorie'] not in ('urgent', 'a_repondre'):
                 r['categorie'] = 'a_repondre'  # demande STOP : drapeau + brouillon de confirmation
-            if r['categorie'] == 'pub' and protege(msg, c['corps']):
-                r['categorie'] = 'info'  # ATHX ou identifiants : rangé dans Info, jamais supprimé
+            if r['categorie'] == 'pub' and (protege(msg, c['corps']) or connu(msg.get('From'))):
+                r['categorie'] = 'info'  # ATHX, Fit & Rack, identifiants, correspondant connu : jamais supprimé
             cat = r['categorie']
             stats[cat] += 1
             if DETAILS:
@@ -616,11 +627,9 @@ def trier():
                 if cat == 'pub':
                     boite.ecrire('STORE', u, '+FLAGS.SILENT', '(\\Seen)')
                 marquer(c, *mots)
-                if cat == 'pub':
-                    if corbeille:
-                        boite.deplacer(u, corbeille)  # pubs supprimées (récupérables dans la corbeille)
-                else:
-                    boite.deplacer(u, boite.chemin(DOSSIERS[cat]))
+                if cat == 'pub' and corbeille:
+                    boite.deplacer(u, corbeille)  # pubs supprimées (récupérables dans la corbeille)
+                # Compta / Info : restent dans la boîte de réception (demande de Vincent, 28/10/2026)
     finally:
         if not DRY_RUN:
             sauver_etat(etat)
