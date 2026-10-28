@@ -1,0 +1,28 @@
+name: Chercher un expéditeur
+
+on:
+  workflow_dispatch:
+    inputs:
+      motif:
+        description: 'Regex (ex. fit\s*(&|and|n|et|-)?\s*rack)'
+        required: true
+      texte:
+        description: 'Mot pour la recherche IMAP (ex. rack)'
+        required: true
+      restaurer:
+        description: 'Remettre en boîte de réception ce qui est dans la corbeille'
+        type: boolean
+        default: false
+
+jobs:
+  chercher:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 outils/chercher.py
+        env:
+          IMAP_USER: ${{ vars.IMAP_USER }}
+          IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
+          MOTIF: ${{ inputs.motif }}
+          TEXTE: ${{ inputs.texte }}
+          RESTAURER: ${{ inputs.restaurer && '1' || '0' }}
