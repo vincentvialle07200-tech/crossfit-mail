@@ -66,6 +66,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
           RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
+          CRM_CRON_SECRET: ${{ secrets.CRM_CRON_SECRET }}
           INFOS_URL: ${{ vars.INFOS_URL }}
           RELANCES_MODE: ${{ vars.RELANCES_MODE }}
           DRY_RUN: ${{ inputs.test && '1' || '0' }}

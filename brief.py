@@ -2,12 +2,14 @@
 La Salle CrossFit — Brief du matin (vers 7h), déposé dans la boîte contact@ (non lu, jamais envoyé ailleurs)
 
 Version IMAP + ResaWod du brief THE GYM (~/the-gym-mail/Brief.gs), format du Brief LINEA :
-  📊 chiffres clés · 🚨 alertes · 📅 agenda du jour · 🎯 to-do · 📬 mails à traiter · 💡 levier croissance
+  📊 chiffres clés · 📣 pubs Meta · 🚨 alertes · 📅 agenda du jour · 🎯 to-do · 📬 mails à traiter · 💡 levier croissance
+Pubs Meta (compte « Pub LA SALLE CROSSFIT ») : lues via le CRM LINEA (/api/tracking/meta, token système en lecture seule) :
+leads des 7 derniers jours vs les 7 d'avant → alerte si baisse, et la pub qui performe le moins (à couper et remplacer).
 Si ResaWod est indisponible à 7h, le brief part avec « ⚠️ ResaWod : source indisponible »,
 puis un « (mis à jour) » est déposé dès que ResaWod répond (jusqu'à 20h).
 
 Sources : la boîte (classement du tri IA) et ResaWod (back-office sport.nubapp.com, connexion par l'API).
-Variables : IMAP_USER, IMAP_PASSWORD, ANTHROPIC_API_KEY, RESAWOD_USER, RESAWOD_PASSWORD
+Variables : IMAP_USER, IMAP_PASSWORD, ANTHROPIC_API_KEY, RESAWOD_USER, RESAWOD_PASSWORD, CRM_CRON_SECRET
   FORCER=1    envoie même hors créneau / même si déjà envoyé aujourd'hui
   APERCU=1    écrit apercu-brief.html sans rien déposer (test local, données fictives si pas d'accès)
 """
@@ -34,6 +36,9 @@ WEBMAIL = 'https://mailbusiness.ionos.fr/appsuite/#!!&app=io.ox/mail&folder=defa
 MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
 JOURS_SEM = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
 J_ABR = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.']
+CRM = 'https://linea-crm.vercel.app'
+COMPTE_PUB = '3410014382465423'  # Pub LA SALLE CROSSFIT
+GESTIONNAIRE_PUBS = 'https://adsmanager.facebook.com/adsmanager/manage/ads?act=' + COMPTE_PUB
 M_ABR = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.']
 
 
@@ -269,7 +274,54 @@ def calculer_alertes(mb, rw, maintenant):
         a.append((2, '⚠️ ResaWod : source indisponible (%s)' % rw['erreur']))
     for x in mb['avis']:
         a.append((3, '🟢 Nouvel avis Google : ' + x['sujet']))
+    pb = mb.get('pubs') or {}
+    if pb.get('ok') and pb['baisse']:
+        a.append((1, '🟠 Leads des pubs en baisse : %d sur 7 jours contre %d la semaine d\'avant (%d %%) → ajoute de nouvelles affiches' % (
+            pb['leads'], pb['leads_prec'], round(100 * (pb['leads'] - pb['leads_prec']) / pb['leads_prec']))))
+    elif pb.get('ok') and pb['depense'] >= 20 and not pb['leads']:
+        a.append((1, '🟠 Pubs : %s dépensés sur 7 jours sans aucun lead → ajoute de nouvelles affiches' % eur(pb['depense'])))
+    elif pb and not pb.get('ok'):
+        a.append((3, '⚠️ Pubs Meta : source indisponible (%s)' % pb.get('erreur')))
     return [t for _, t in sorted(a, key=lambda x: x[0])]
+
+
+# ───────────────────────── Pubs Meta ─────────────────────────
+def rapport_pubs(du, au):
+    url = '%s/api/tracking/meta?%s' % (CRM, urllib.parse.urlencode({'report': 'ads', 'account': COMPTE_PUB, 'from': du, 'to': au}))
+    req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['CRM_CRON_SECRET']})
+    try:
+        return json.loads(urllib.request.urlopen(req, timeout=60).read())
+    except urllib.error.HTTPError as e:
+        try:
+            raise RuntimeError(json.loads(e.read()).get('error') or e.code)
+        except ValueError:
+            raise RuntimeError(e.code)
+
+
+def donnees_pubs(maintenant):
+    """Leads des 7 derniers jours (hier inclus) vs les 7 jours d'avant + la pub active qui performe le moins."""
+    if not os.environ.get('CRM_CRON_SECRET'):
+        return {'ok': False, 'erreur': 'CRM_CRON_SECRET manquant'}
+    j = lambda n: (maintenant - timedelta(days=n)).strftime('%Y-%m-%d')
+    try:
+        sem, prec = rapport_pubs(j(7), j(1)), rapport_pubs(j(14), j(8))
+    except Exception as e:
+        return {'ok': False, 'erreur': str(e)[:120]}
+    t, tp = sem.get('total') or {}, prec.get('total') or {}
+    p = {'ok': True, 'leads': t.get('leads', 0), 'leads_prec': tp.get('leads', 0), 'depense': t.get('spend', 0),
+         'depense_prec': tp.get('spend', 0), 'cpl': t.get('cost_per_lead'), 'cpl_prec': tp.get('cost_per_lead'), 'pire': None}
+    p['baisse'] = p['leads_prec'] >= 3 and p['leads'] <= 0.8 * p['leads_prec']
+    # Pub à couper : parmi les pubs actives qui ont dépensé au moins 5 € sur 7 jours, celle au pire coût par lead
+    # (0 lead = la pire). Jamais la dernière pub active.
+    actives = [a for a in sem.get('ads', []) if a.get('status', 'ACTIVE') == 'ACTIVE']
+    candidates = [a for a in actives if a.get('spend', 0) >= 5]
+    if len(actives) >= 2 and candidates and any(x.get('leads') for x in actives):
+        pire = max(candidates, key=lambda a: (a['spend'] / a['leads']) if a.get('leads') else a['spend'] * 1000)
+        meilleur = min(actives, key=lambda a: (a['spend'] / a['leads']) if a.get('leads') else float('inf'))
+        if pire is not meilleur:
+            p['pire'] = pire
+    p['nb_actives'] = len(actives)
+    return p
 
 
 # ───────────────────────── IA : 3 priorités + 1 levier ─────────────────────────
@@ -365,6 +417,20 @@ def rendre(b, maintenant):
                 (' · ' + gris('%d brouillons à envoyer' % rel['en_attente'])) if rel.get('en_attente') else ''))
     h += section('📊 CHIFFRES CLÉS', liste(chiffres) if chiffres else vide(gris('⚠️ ResaWod : source indisponible')))
 
+    # 📣 Pubs Meta
+    pb = mb.get('pubs') or {}
+    if pb.get('ok'):
+        fmt = lambda v: eur(v) if v is not None else '—'
+        lignes = ['<b>%d</b> leads sur 7 jours %s · %s dépensés · %s / lead' % (
+            pb['leads'], gris('(%d la semaine d\'avant)' % pb['leads_prec']), fmt(pb['depense']), fmt(pb['cpl']))]
+        if pb['pire']:
+            x = pb['pire']
+            img = ('<br><img src="%s" width="96" style="margin-top:6px;border-radius:6px" alt="">' % e(x['thumbnail'])) if x.get('thumbnail') else ''
+            lignes.append('✂️ Performe le moins : <b>« %s »</b> %s%s' % (
+                e(x.get('ad') or '?'), gris('· %s dépensés · %d lead%s%s' % (fmt(x['spend']), x.get('leads') or 0, 's' if (x.get('leads') or 0) > 1 else '',
+                                            (' · %s / lead' % fmt(x.get('cost_per_lead'))) if x.get('leads') else '')), img))
+        h += section('📣 PUBS META', liste(lignes))
+
     # 🚨 Alertes
     h += section('🚨 ALERTES', liste([e(a) for a in b['alertes']]) if b['alertes'] else vide('RAS'))
 
@@ -398,6 +464,12 @@ def rendre(b, maintenant):
         t = 3 if mb['urgents'] else 4
         todo.append('📬 <b>Ouvre Brouillons, relis et envoie</b> : %s <span style="color:#888">(%d min — s\'il en reste, la suite demain)</span>' % (quoi, t))
         minutes += t
+    pb = mb.get('pubs') or {}
+    if pb.get('ok') and (pb['baisse'] or (pb['depense'] >= 20 and not pb['leads'])):
+        coupe = (' et coupe « %s »' % e(pb['pire'].get('ad') or '?')) if pb.get('pire') else ''
+        todo.append('🖼️ <b>Demande 2 nouvelles affiches à Claude</b>, ajoute-les dans la campagne%s %s' % (
+            coupe, '<span style="color:#888">(10 min · <a href="%s" style="color:#1a73e8">Gestionnaire de publicités</a>)</span>' % GESTIONNAIRE_PUBS))
+        minutes += 10
     for i, p in enumerate(ia.get('priorites', [])[:2]):
         if i and minutes + 4 > 19:
             break  # 20 minutes maximum par jour, au moins une action de croissance
@@ -474,6 +546,9 @@ def brief(forcer=False, apercu=False):
             print('ResaWod toujours indisponible, pas de mise à jour.')
             return
         mb = donnees_boite(boite, maintenant)
+        mb['pubs'] = donnees_pubs(maintenant)
+        print('Pubs Meta : %s' % ('ok, %d leads sur 7 j (%d avant)%s' % (mb['pubs']['leads'], mb['pubs']['leads_prec'], ', baisse' if mb['pubs']['baisse'] else '')
+                                  if mb['pubs']['ok'] else 'indisponible (%s)' % mb['pubs']['erreur']))
         alertes = calculer_alertes(mb, rw, maintenant)
         donnees = {
             'date': jour_fr(maintenant),
@@ -481,6 +556,7 @@ def brief(forcer=False, apercu=False):
             'mails_urgents': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['urgents']],
             'mails_a_repondre': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['a_repondre'][:15]],
             'factures_24h': [m['sujet'] for m in mb['compta']],
+            'pubs_meta_7j': {k: v for k, v in mb['pubs'].items() if k != 'pire'} if mb['pubs'].get('ok') else 'indisponible',
             'resawod': ({k: v for k, v in rw.items() if k not in ('jamais_venus', 'mobiles', 'fins')} | {'comptes_crees_60j_jamais_venus': len(rw.get('jamais_venus', [])), 'abonnements_carnets_finis_non_renouveles_14j': len(rw.get('fins', []))}) if rw['ok'] else 'ResaWod indisponible',
             'leviers_deja_donnes': [],
         }

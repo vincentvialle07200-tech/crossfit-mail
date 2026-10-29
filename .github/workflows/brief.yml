@@ -33,5 +33,6 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
           RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
+          CRM_CRON_SECRET: ${{ secrets.CRM_CRON_SECRET }}
           FORCER: ${{ inputs.forcer && '1' || '0' }}
           APERCU: ${{ inputs.apercu && '1' || '0' }}
