@@ -276,8 +276,8 @@ def calculer_alertes(mb, rw, maintenant):
         a.append((3, '🟢 Nouvel avis Google : ' + x['sujet']))
     pb = mb.get('pubs') or {}
     if pb.get('ok') and pb['baisse']:
-        a.append((1, '🟠 Leads des pubs en baisse : %d sur 7 jours contre %d la semaine d\'avant (%d %%) → ajoute de nouvelles affiches' % (
-            pb['leads'], pb['leads_prec'], round(100 * (pb['leads'] - pb['leads_prec']) / pb['leads_prec']))))
+        a.append((1, '🟠 Leads des pubs en baisse : %d sur 7 jours contre %d la semaine d\'avant (−%d %%) → ajoute de nouvelles affiches' % (
+            pb['leads'], pb['leads_prec'], round(100 * (pb['leads_prec'] - pb['leads']) / pb['leads_prec']))))
     elif pb.get('ok') and pb['depense'] >= 20 and not pb['leads']:
         a.append((1, '🟠 Pubs : %s dépensés sur 7 jours sans aucun lead → ajoute de nouvelles affiches' % eur(pb['depense'])))
     elif pb and not pb.get('ok'):
