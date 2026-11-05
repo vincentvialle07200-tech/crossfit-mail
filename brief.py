@@ -4,7 +4,8 @@ La Salle CrossFit — Brief du matin (vers 7h), déposé dans la boîte contact@
 Version IMAP + ResaWod du brief THE GYM (~/the-gym-mail/Brief.gs), format du Brief LINEA :
   📊 chiffres clés · 📣 pubs Meta · 🚨 alertes · 📅 agenda du jour · 🎯 to-do · 📬 mails à traiter · 💡 levier croissance
 Pubs Meta (compte « Pub LA SALLE CROSSFIT ») : lues via le CRM LINEA (/api/tracking/meta, token système en lecture seule) :
-leads des 7 derniers jours vs les 7 d'avant → alerte si baisse, et la pub qui performe le moins (à couper et remplacer).
+leads 7 j vs 7 j précédents, part des clics qui donnent un lead, détail par pub sur 14 j et règle de coupe unique
+(≥ 25 € et 0-1 lead). Jamais d'alerte « ajoute des affiches » (audit du 05/11/2026 : au plus 1 nouvelle pub par semaine).
 Si ResaWod est indisponible à 7h, le brief part avec « ⚠️ ResaWod : source indisponible »,
 puis un « (mis à jour) » est déposé dès que ResaWod répond (jusqu'à 20h).
 
@@ -275,11 +276,15 @@ def calculer_alertes(mb, rw, maintenant):
     for x in mb['avis']:
         a.append((3, '🟢 Nouvel avis Google : ' + x['sujet']))
     pb = mb.get('pubs') or {}
+    if pb.get('ok') and pb['conversion_faible']:
+        a.append((1, '🟠 Pubs : seulement %s %% des clics donnent un lead (normal ≈ %d %%) → le problème est le formulaire ou des clics de curieux, '
+                     'pas le nombre de pubs : n\'en ajoute pas' % (str(pb['taux']).replace('.', ','), TAUX_NORMAL)))
     if pb.get('ok') and pb['baisse']:
-        a.append((1, '🟠 Leads des pubs en baisse : %d sur 7 jours contre %d la semaine d\'avant (−%d %%) → ajoute de nouvelles affiches' % (
+        a.append((1, '🟠 Leads des pubs en baisse : %d sur 7 jours contre %d la semaine d\'avant (−%d %%) → coupe la pub qui ne convertit pas, '
+                     'vérifie le formulaire et le rappel des leads' % (
             pb['leads'], pb['leads_prec'], round(100 * (pb['leads_prec'] - pb['leads']) / pb['leads_prec']))))
     elif pb.get('ok') and pb['depense'] >= 20 and not pb['leads']:
-        a.append((1, '🟠 Pubs : %s dépensés sur 7 jours sans aucun lead → ajoute de nouvelles affiches' % eur(pb['depense'])))
+        a.append((1, '🟠 Pubs : %s dépensés sur 7 jours sans aucun lead → vérifie le formulaire et la pub qui dépense' % eur(pb['depense'])))
     elif pb and not pb.get('ok'):
         a.append((3, '⚠️ Pubs Meta : source indisponible (%s)' % pb.get('erreur')))
     return [t for _, t in sorted(a, key=lambda x: x[0])]
@@ -298,28 +303,46 @@ def rapport_pubs(du, au):
             raise RuntimeError(e.code)
 
 
+COUPE_DEPENSE = 25    # € dépensés sur 14 j (≈ 2 × le coût par lead visé)…
+COUPE_LEADS_MAX = 1   # … avec 0 ou 1 lead → la pub est à couper (audit du 05/11/2026)
+TAUX_NORMAL = 5       # % des clics qui donnent un lead quand le formulaire fonctionne (août-sept. 2026)
+
+
+def taux(leads, clics):
+    return round(100 * leads / clics, 1) if clics else None
+
+
 def donnees_pubs(maintenant):
-    """Leads des 7 derniers jours (hier inclus) vs les 7 jours d'avant + la pub active qui performe le moins."""
+    """Leads des 7 derniers jours (hier inclus) vs les 7 jours d'avant, part des clics qui donnent un lead,
+    et détail par pub sur 14 jours avec la règle de coupe unique (≥ 25 € dépensés et 0-1 lead).
+    Pas de « nouvelles affiches » : au plus 1 nouvelle créa par semaine (audit du 05/11/2026)."""
     if not os.environ.get('CRM_CRON_SECRET'):
         return {'ok': False, 'erreur': 'CRM_CRON_SECRET manquant'}
     j = lambda n: (maintenant - timedelta(days=n)).strftime('%Y-%m-%d')
     try:
-        sem, prec = rapport_pubs(j(7), j(1)), rapport_pubs(j(14), j(8))
+        sem, prec, q14 = rapport_pubs(j(7), j(1)), rapport_pubs(j(14), j(8)), rapport_pubs(j(14), j(1))
     except Exception as e:
         return {'ok': False, 'erreur': str(e)[:120]}
     t, tp = sem.get('total') or {}, prec.get('total') or {}
     p = {'ok': True, 'leads': t.get('leads', 0), 'leads_prec': tp.get('leads', 0), 'depense': t.get('spend', 0),
-         'depense_prec': tp.get('spend', 0), 'cpl': t.get('cost_per_lead'), 'cpl_prec': tp.get('cost_per_lead'), 'pire': None}
+         'depense_prec': tp.get('spend', 0), 'cpl': t.get('cost_per_lead'), 'cpl_prec': tp.get('cost_per_lead'),
+         'clics': t.get('link_clicks', 0), 'clics_prec': tp.get('link_clicks', 0), 'cpc': t.get('cpc')}
+    p['taux'] = taux(p['leads'], p['clics'])
+    p['taux_prec'] = taux(p['leads_prec'], p['clics_prec'])
     p['baisse'] = p['leads_prec'] >= 3 and p['leads'] <= 0.8 * p['leads_prec']
-    # Pub à couper : parmi les pubs actives qui ont dépensé au moins 5 € sur 7 jours, celle au pire coût par lead
-    # (0 lead = la pire). Jamais la dernière pub active.
-    actives = [a for a in sem.get('ads', []) if a.get('status', 'ACTIVE') == 'ACTIVE']
-    candidates = [a for a in actives if a.get('spend', 0) >= 5]
-    if len(actives) >= 2 and candidates and any(x.get('leads') for x in actives):
-        pire = max(candidates, key=lambda a: (a['spend'] / a['leads']) if a.get('leads') else a['spend'] * 1000)
-        meilleur = min(actives, key=lambda a: (a['spend'] / a['leads']) if a.get('leads') else float('inf'))
-        if pire is not meilleur:
-            p['pire'] = pire
+    p['conversion_faible'] = p['clics'] >= 100 and (p['taux'] or 0) < 2
+    pubs = [{'ad': a.get('ad') or '?', 'actif': a.get('status', 'ACTIVE') == 'ACTIVE', 'depense': a.get('spend', 0),
+             'clics': a.get('link_clicks', 0), 'leads': a.get('leads', 0), 'cpl': a.get('cost_per_lead'),
+             'taux': taux(a.get('leads', 0), a.get('link_clicks', 0)), 'thumbnail': a.get('thumbnail')}
+            for a in q14.get('ads', [])]
+    pubs.sort(key=lambda a: -a['depense'])
+    actives = [a for a in pubs if a['actif']]
+    a_couper = [a for a in actives if a['depense'] >= COUPE_DEPENSE and a['leads'] <= COUPE_LEADS_MAX]
+    if a_couper and len(a_couper) == len(actives):  # jamais toutes : on garde celle au meilleur coût par lead
+        garder = min(actives, key=lambda a: (a['depense'] / a['leads']) if a['leads'] else a['depense'] * 1000)
+        a_couper = [a for a in a_couper if a is not garder]
+    p['pubs_14j'] = pubs
+    p['a_couper'] = a_couper
     p['nb_actives'] = len(actives)
     return p
 
@@ -421,14 +444,17 @@ def rendre(b, maintenant):
     pb = mb.get('pubs') or {}
     if pb.get('ok'):
         fmt = lambda v: eur(v) if v is not None else '—'
+        pct = lambda v: (str(v).replace('.', ',') + ' %') if v is not None else '—'
         lignes = ['<b>%d</b> leads sur 7 jours %s · %s dépensés · %s / lead' % (
-            pb['leads'], gris('(%d la semaine d\'avant)' % pb['leads_prec']), fmt(pb['depense']), fmt(pb['cpl']))]
-        if pb['pire']:
-            x = pb['pire']
-            img = ('<br><img src="%s" width="96" style="margin-top:6px;border-radius:6px" alt="">' % e(x['thumbnail'])) if x.get('thumbnail') else ''
-            lignes.append('✂️ Performe le moins : <b>« %s »</b> %s%s' % (
-                e(x.get('ad') or '?'), gris('· %s dépensés · %d lead%s%s' % (fmt(x['spend']), x.get('leads') or 0, 's' if (x.get('leads') or 0) > 1 else '',
-                                            (' · %s / lead' % fmt(x.get('cost_per_lead'))) if x.get('leads') else '')), img))
+            pb['leads'], gris('(%d la semaine d\'avant)' % pb['leads_prec']), fmt(pb['depense']), fmt(pb['cpl'])),
+            'Clics → lead : <b>%s</b> %s · %d clics à %s' % (pct(pb['taux']), gris('(%s la semaine d\'avant ; normal ≈ %d %%)' % (
+                pct(pb['taux_prec']), TAUX_NORMAL)), pb['clics'], ('%.2f €' % pb['cpc']).replace('.', ',') if pb['cpc'] is not None else '—')]
+        coupe = {id(a) for a in pb['a_couper']}
+        for a in [a for a in pb['pubs_14j'] if a['actif']][:6]:
+            lignes.append('%s<b>%s</b> %s' % ('✂️ ' if id(a) in coupe else '', e(a['ad']), gris('· 14 j : %s · %d clics · %d lead%s · %s des clics%s' % (
+                fmt(a['depense']), a['clics'], a['leads'], 's' if a['leads'] > 1 else '', pct(a['taux']),
+                (' · %s / lead' % fmt(a['cpl'])) if a['leads'] else ''))))
+        lignes.append(gris('Règle : une pub est coupée après %d € dépensés sur 14 jours avec 0 ou 1 lead (✂️). Au plus 1 nouvelle pub par semaine.' % COUPE_DEPENSE))
         h += section('📣 PUBS META', liste(lignes))
 
     # 🚨 Alertes
@@ -465,11 +491,14 @@ def rendre(b, maintenant):
         todo.append('📬 <b>Ouvre Brouillons, relis et envoie</b> : %s <span style="color:#888">(%d min — s\'il en reste, la suite demain)</span>' % (quoi, t))
         minutes += t
     pb = mb.get('pubs') or {}
-    if pb.get('ok') and (pb['baisse'] or (pb['depense'] >= 20 and not pb['leads'])):
-        coupe = (' et coupe « %s »' % e(pb['pire'].get('ad') or '?')) if pb.get('pire') else ''
-        todo.append('🖼️ <b>Demande 2 nouvelles affiches à Claude</b>, ajoute-les dans la campagne%s %s' % (
-            coupe, '<span style="color:#888">(10 min · <a href="%s" style="color:#1a73e8">Gestionnaire de publicités</a>)</span>' % GESTIONNAIRE_PUBS))
-        minutes += 10
+    gest = '<a href="%s" style="color:#1a73e8">Gestionnaire de publicités</a>' % GESTIONNAIRE_PUBS
+    if pb.get('ok') and pb['a_couper']:
+        todo.append('✂️ <b>Coupe %s</b> dans le %s <span style="color:#888">(2 min · %d € ou plus dépensés sur 14 jours pour 0 ou 1 lead)</span>' % (
+            ', '.join('« %s »' % e(a['ad']) for a in pb['a_couper']), gest, COUPE_DEPENSE))
+        minutes += 2
+    elif pb.get('ok') and (pb['baisse'] or pb['conversion_faible'] or (pb['depense'] >= 20 and not pb['leads'])):
+        todo.append('🔍 <b>Vérifie le formulaire attaché aux pubs</b> et que chaque lead a été rappelé <span style="color:#888">(5 min · %s)</span>' % gest)
+        minutes += 5
     for i, p in enumerate(ia.get('priorites', [])[:2]):
         if i and minutes + 4 > 19:
             break  # 20 minutes maximum par jour, au moins une action de croissance
@@ -547,7 +576,7 @@ def brief(forcer=False, apercu=False):
             return
         mb = donnees_boite(boite, maintenant)
         mb['pubs'] = donnees_pubs(maintenant)
-        print('Pubs Meta : %s' % ('ok, %d leads sur 7 j (%d avant)%s' % (mb['pubs']['leads'], mb['pubs']['leads_prec'], ', baisse' if mb['pubs']['baisse'] else '')
+        print('Pubs Meta : %s' % ('ok, %d leads sur 7 j (%d avant), %d pub(s) à couper%s' % (mb['pubs']['leads'], mb['pubs']['leads_prec'], len(mb['pubs']['a_couper']), ', baisse' if mb['pubs']['baisse'] else '')
                                   if mb['pubs']['ok'] else 'indisponible (%s)' % mb['pubs']['erreur']))
         alertes = calculer_alertes(mb, rw, maintenant)
         donnees = {
@@ -556,7 +585,7 @@ def brief(forcer=False, apercu=False):
             'mails_urgents': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['urgents']],
             'mails_a_repondre': ['%s — %s (%s)' % (m['sujet'], m['de'], age(m['date'], maintenant)) for m in mb['a_repondre'][:15]],
             'factures_24h': [m['sujet'] for m in mb['compta']],
-            'pubs_meta_7j': {k: v for k, v in mb['pubs'].items() if k != 'pire'} if mb['pubs'].get('ok') else 'indisponible',
+            'pubs_meta_7j': {k: v for k, v in mb['pubs'].items() if k not in ('pubs_14j', 'a_couper')} if mb['pubs'].get('ok') else 'indisponible',
             'resawod': ({k: v for k, v in rw.items() if k not in ('jamais_venus', 'mobiles', 'fins')} | {'comptes_crees_60j_jamais_venus': len(rw.get('jamais_venus', [])), 'abonnements_carnets_finis_non_renouveles_14j': len(rw.get('fins', []))}) if rw['ok'] else 'ResaWod indisponible',
             'leviers_deja_donnes': [],
         }
