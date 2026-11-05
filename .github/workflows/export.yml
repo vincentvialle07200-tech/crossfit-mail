@@ -1,0 +1,20 @@
+name: Export ResaWod chiffré (croisement des leads)
+on: {workflow_dispatch: {}}
+permissions: {contents: read}
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 outils/export_chiffre.py
+        env:
+          IMAP_USER: ${{ vars.IMAP_USER }}
+          RESAWOD_USER: ${{ secrets.RESAWOD_USER }}
+          RESAWOD_PASSWORD: ${{ secrets.RESAWOD_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - run: openssl enc -aes-256-cbc -pbkdf2 -salt -in export.json -out export.enc -pass env:EXPORT_KEY && rm export.json
+        env:
+          EXPORT_KEY: ${{ secrets.EXPORT_KEY }}
+      - uses: actions/upload-artifact@v4
+        with: {name: export-chiffre, path: export.enc, retention-days: 1}
