@@ -47,16 +47,17 @@ jobs:
           key: etat-${{ github.run_id }}
           restore-keys: etat-
 
-      - name: Trier la boîte (toutes les 10 min pendant ~5h50) + brief de 7h
+      - name: Trier la boîte (toutes les 10 min pendant ~5h50) + brief de 7h + alertes nouveaux prospects du CRM
         run: |
           if [ "${JOURS_RAPATRIER:-0}" != "0" ]; then python3 outils/rapatrier.py || exit 1; fi
           if [ "$RESTAURER" = "1" ]; then python3 outils/restaurer.py || exit 1; fi
-          if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then python3 tri.py; exit $?; fi
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then python3 tri.py; r=$?; python3 notif_crm.py || echo "Alerte CRM : échec"; exit $r; fi
           debut=$(date +%s); echecs=0
           while [ $(( $(date +%s) - debut )) -lt 20700 ]; do
             python3 tri.py && echecs=0 || echecs=$((echecs+1))
             python3 brief.py || echo "Brief : échec"
             python3 relances.py || echo "Relances : échec"
+            python3 notif_crm.py || echo "Alerte CRM : échec"
             [ $echecs -ge 3 ] && exit 1
             sleep 600
           done
